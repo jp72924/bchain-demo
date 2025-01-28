@@ -1,0 +1,15 @@
+---------------- Wallet 1 ----------------
+
+Private Key (hex): 93b4e468821ac20a05df4404f4b401c46f0e18f3dc819f134bd39d003641387c
+Public Key (hex): 02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5
+
+Private Key (WIF): 5JwLYmprzAVrRZNSMe5NfSNR1jdgSbhJ3Cfog9oA3YaX5VRbe5Y
+Bitcoin Address: 1LjSwS2r46eQuWsgV1zUKV4vXAJvG9BgRd
+
+---------------- Wallet 2 ----------------
+
+Private Key (hex): 6e3a9c356b3519a1dcd01e54c4c74bcb5fc84eda927b28b96748553dbf169054
+Public Key (hex): 026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20
+
+Private Key (WIF): 5JeqEQgLd42nWXaoJDDeyG1zhXoLxRkAstz8ZfU81CkhvtUfneJ
+Bitcoin Address: 1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn
