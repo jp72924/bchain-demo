@@ -10,6 +10,27 @@ class Outpoint:
     def __repr__(self):
         return f"Outpoint(hash={self.hash.hex()}, index={self.index})"
 
+    def __hash__(self):
+        return hash(self.__repr__())
+
+    def __eq__(self, other):
+        if not isinstance(other, Outpoint):
+            # Don't attempt to compare against unrelated types
+            return NotImplemented
+        return self.hash == other.hash and self.index == other.index
+
+    def is_null(self):
+        """
+        Checks if the Outpoint is a null outpoint.
+
+        A null outpoint is defined as having a hash of all zeros 
+        and an index of 0xffffffff.
+
+        Returns:
+            bool: True if the Outpoint is a null outpoint, False otherwise.
+        """
+        return self.hash == b'\x00' * 32 and self.index == 0xffffffff
+
 
 class TxIn:
     def __init__(self, prevout, script_sig):
@@ -33,6 +54,19 @@ class Transaction:
     def __init__(self, vin=[], vout=[]):
         self.vin = vin
         self.vout = vout
+
+    def is_coinbase(self):
+        """
+        Checks if the transaction is a coinbase transaction.
+
+        Returns:
+            bool: True if the transaction is a coinbase transaction, False otherwise.
+        """
+        if len(self.vin) != 1:
+            return False  # Coinbase transactions have only one input
+
+        coinbase_input = self.vin[0] 
+        return coinbase_input.prevout.is_null()
 
     def serialize(self):
         """Serializes the transaction into a byte string"""

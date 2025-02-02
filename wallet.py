@@ -1,8 +1,17 @@
-import base58
 import hashlib
 from hashlib import sha256
-from transaction import Outpoint, TxIn, TxOut, Transaction
+from transaction import Outpoint
+from transaction import TxIn
+from transaction import TxOut
+from transaction import Transaction
 import copy
+
+
+try:
+    import base58
+except ImportError:
+    print("Please install the ecdsa library: pip install base58")
+    exit()
 
 try:
     import ecdsa
@@ -61,24 +70,24 @@ class Wallet:
             A new Transaction object.
         """
         # 1. Calculate total input value
-        total_input = sum(utxo.value for utxo in utxo_list)
+        total_input = sum(utxo.tx_out.value for utxo in utxo_list)
 
         # 2. Create transaction outputs
-        outputs = [
+        vout = [
             TxOut(amount, recipient_public_key), 
             TxOut(total_input - amount, self.public_key)  # Change output to sender
         ]
 
         # 3. Create transaction inputs
-        inputs = [
+        vin = [
             TxIn(
-                Outpoint(utxo.tx_hash, utxo.tx_index), b''
+                Outpoint(utxo.prevout.hash, utxo.prevout.index), b''
             ) 
             for utxo in utxo_list
         ]
 
         # 4. Create transaction object
-        transaction = Transaction(inputs, outputs)
+        transaction = Transaction(vin, vout)
 
         return transaction
 
@@ -190,8 +199,32 @@ class Wallet:
 
         return address
 
+
+def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey):
+    """
+    Creates a new coinbase transaction paying the miner.
+
+    Args:
+        coinbase_data (bytes, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
+        miner_reward (int): The amount of the miner reward in satoshis.
+        miner_script_pubkey (bytes): The script public key of the miner's address.
+
+    Returns:
+        Transaction: A new coinbase transaction instance.
+    """
+    coinbase_input = TxIn(
+        prevout=Outpoint(hash=b'\x00' * 32, index=0xffffffff),  # Special prevout for coinbase
+        script_sig=coinbase_data
+    )
+    coinbase_output = TxOut(value=miner_reward, script_pubkey=miner_script_pubkey)
+
+    return Transaction(vin=[coinbase_input], vout=[coinbase_output])
+
+
 def main():
     # Example usage:
+
+    # Sender's private key (bytes)
     private_key = bytes.fromhex("93b4e468821ac20a05df4404f4b401c46f0e18f3dc819f134bd39d003641387c")
 
     wallet = Wallet.from_private_key(private_key)
@@ -203,24 +236,15 @@ def main():
     is_valid = wallet.verify(message, signature)
     print(f"Message signature is valid: {is_valid}")
 
-    # Create sample UTXOs
-    prevout = Outpoint(
-        hash=bytes.fromhex("0" * 64),
-        index=int('0xffffffff', 16),  # 2 ^ 32 (maximun value)
+    # Recipient's public key (bytes)
+    public_key = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
+    
+    # Create a coinbase transaction
+    coinbase = create_coinbase_transaction(
+        coinbase_data=b'',
+        miner_reward=5000000000,
+        miner_script_pubkey=public_key
     )
-
-    tx_in = TxIn(
-        prevout=prevout,
-        script_sig=b''  # Sender's signature (signs transaction hash using the private key)
-    )
-
-    tx_out = TxOut(
-        value=5000000000,  # 50 Bitcoins (5,000,000,000 sats)
-        script_pubkey=bytes.fromhex("026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20")  # Recipient's public key (bytes)
-    )
-
-    # Create a transaction
-    coinbase = Transaction(vin=[tx_in], vout=[tx_out])
 
     # Sign the transaction
     signed_transaction = wallet.sign_transaction(coinbase)
