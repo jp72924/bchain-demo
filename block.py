@@ -98,7 +98,6 @@ def main():
     
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
-        block_height=0,
         coinbase_data=b'',
         miner_reward=5000000000,
         miner_script_pubkey=public_key

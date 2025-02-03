@@ -11,7 +11,7 @@ from datetime import datetime
 
 class Node:
     BLOCK_REWARD = 625000000  # 6.25 Bitcoins (625,000,000 sats)
-    DIFFICULTY_BITS = 12
+    DIFFICULTY_BITS = 20
 
     def __init__(self, miner_address):
         self.blockchain = []
@@ -130,15 +130,19 @@ class Node:
             prev_block=b'',
             transactions=[],
             bits=Node.DIFFICULTY_BITS,
-            coinbase_data=b'',
+            coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little') ,
             miner_reward=Node.BLOCK_REWARD,
             miner_script_pubkey=self.miner_address,
             time=None
         )
+
+        # Calculates the hash of a block header and
+        # performs Proof of Work to find a valid block hash.
         candidate_block.mine()
+        print("Block mined!", candidate_block.hash().hex())
 
         self.update_local_state(candidate_block)
-        print("Block mined!")
+        print("Block added to the blockchain.")
 
     def run(self):
         """Continuously mines new blocks."""
@@ -149,13 +153,16 @@ class Node:
                 miner_reward=Node.BLOCK_REWARD, 
                 miner_script_pubkey=self.miner_address
             )
+            print("Genesis block created.")
 
         while True:
+            print("Starting Proof of Work...")
             self.mine_new_block()
 
 
 def main():
-    miner_address = b""
+    # Recipient's public key (bytes)
+    miner_address = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
     node = Node(miner_address)
     node.run()
 
