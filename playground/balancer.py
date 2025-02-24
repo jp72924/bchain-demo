@@ -9,7 +9,8 @@ def recursive_minority_majority(n, recursion_limit=0):
     1. Majority: two-thirds (2/3) of `n`
     2. Minority of the Majority: one-third (1/3) of the Majority
 
-    It then recursively applies this transformation, passing the result of each iteration as the new input for the next step. The recursion continues until the `recursion_limit` is reached, at which point the function returns the final result.
+    It then recursively applies this transformation, passing the result of each iteration as the new input for the next step.
+    The recursion continues until the `recursion_limit` is reached, at which point the function returns the final result.
 
     Args:
         n (float or int): The initial number to be transformed.
@@ -42,7 +43,8 @@ def recursive_sum_majority_minority(n, recursion_limit=0):
     1. Majority: two-thirds (2/3) of the current number `n`.
     2. Minority: one-third (1/3) of the current number `n`.
 
-    In each recursive call, the function adds the majority of the current number to the result of the next recursive step, which is calculated using the minority as the new input. This continues until the recursion limit is reached.
+    In each recursive call, the function adds the majority of the current number to the result of the next recursive step, which is calculated using the minority as the new input.
+    This continues until the recursion limit is reached.
 
     Args:
         n (float or int): The initial number to be transformed and processed.
@@ -68,17 +70,21 @@ def recursive_sum_majority_minority(n, recursion_limit=0):
     return majority + recursive_sum_majority_minority(minority, recursion_limit - 1)
 
 
-MAX_SUPPLY = 10 ** 8
-MARKET_CAP = 500 * 1000
-recursion_limit = 7
+MAX_SUPPLY = 10 ** 8  # 100 M
+TOTAL_SUPPLY = MAX_SUPPLY
+MARKET_CAP = 1000 * 1000  # 1 M fiat
+recursion_limit = 0
 
 while True:
-	BURN_RATE = recursive_minority_majority(MAX_SUPPLY, recursion_limit)
-	COIN_RATE = recursive_sum_majority_minority(BURN_RATE, recursion_limit)
-	NET_BURN_RATE = BURN_RATE - COIN_RATE
-	COIN_PRICE = MARKET_CAP / MAX_SUPPLY
-	
-	print(f"{COIN_PRICE:.8f} {MAX_SUPPLY:.8f} {NET_BURN_RATE:.8f}")
+    BURN_RATE = recursive_minority_majority(TOTAL_SUPPLY, recursion_limit)
+    COIN_RATE = recursive_sum_majority_minority(BURN_RATE, recursion_limit)
+    NET_BURN_RATE = BURN_RATE - COIN_RATE
+    COIN_PRICE = MARKET_CAP / TOTAL_SUPPLY
+    
+    print(f"PRC: {COIN_PRICE:.8f} TOT: {TOTAL_SUPPLY:.8f} NBR: {NET_BURN_RATE:.8f} R: {recursion_limit}")
 
-	MAX_SUPPLY = MAX_SUPPLY - NET_BURN_RATE
-	time.sleep(0.175)
+    TOTAL_SUPPLY = TOTAL_SUPPLY - NET_BURN_RATE
+
+    if TOTAL_SUPPLY < MAX_SUPPLY / (2 ** (recursion_limit + 1)):
+        recursion_limit += 1
+    time.sleep(0.175)
