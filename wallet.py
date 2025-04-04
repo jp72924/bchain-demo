@@ -1,9 +1,9 @@
 import hashlib
 from hashlib import sha256
-from transaction import Outpoint
-from transaction import TxIn
-from transaction import TxOut
-from transaction import Transaction
+from transaction import COutPoint
+from transaction import CTxIn
+from transaction import CTxOut
+from transaction import CTransaction
 import copy
 
 
@@ -67,27 +67,27 @@ class Wallet:
             utxo_list: A list of UTXOs (Unspent Transaction Outputs) to use as inputs.
 
         Returns:
-            A new Transaction object.
+            A new CTransaction object.
         """
         # 1. Calculate total input value
-        total_input = sum(utxo.tx_out.value for utxo in utxo_list)
+        total_input = sum(utxo.tx_out.nValue for utxo in utxo_list)
 
         # 2. Create transaction outputs
         vout = [
-            TxOut(amount, recipient_public_key), 
-            TxOut(total_input - amount, self.public_key)  # Change output to sender
+            CTxOut(amount, recipient_public_key), 
+            CTxOut(total_input - amount, self.public_key)  # Change output to sender
         ]
 
         # 3. Create transaction inputs
         vin = [
-            TxIn(
-                Outpoint(utxo.prevout.hash, utxo.prevout.index), b''
+            CTxIn(
+                COutPoint(utxo.prevout.hash, utxo.prevout.n), b''
             ) 
             for utxo in utxo_list
         ]
 
         # 4. Create transaction object
-        transaction = Transaction(vin, vout)
+        transaction = CTransaction(vin, vout)
 
         return transaction
 
@@ -96,23 +96,23 @@ class Wallet:
         Signs a transaction using the wallet's private key.
 
         Args:
-            transaction: The Transaction object to be signed.
+            transaction: The CTransaction object to be signed.
 
         Returns:
-            A new Transaction object with the script_sig field in the inputs 
+            A new CTransaction object with the scriptSig field in the inputs 
             populated with the signatures.
         """
-        new_transaction = Transaction(vin=copy.deepcopy(transaction.vin), 
+        new_transaction = CTransaction(vin=copy.deepcopy(transaction.vin), 
                                     vout=copy.deepcopy(transaction.vout))
 
         # Sign the transaction hash
-        signature = self.sign(transaction.hash())
+        signature = self.sign(transaction.get_hash())
 
         for i, tx_in in enumerate(new_transaction.vin):
 
-            # Append signature to script_sig (simplified example)
-            # In a real-world scenario, script_sig would be more complex
-            new_transaction.vin[i].script_sig = signature
+            # Append signature to scriptSig (simplified example)
+            # In a real-world scenario, scriptSig would be more complex
+            new_transaction.vin[i].scriptSig = signature
 
         return new_transaction
 
@@ -133,30 +133,30 @@ class Wallet:
         except:
             return False
 
-    def verify_transaction_signature(self, transaction, utx):
+    def verify_transaction_signature(self, transaction):
         """
         Verifies the signatures in a transaction.
 
         Args:
-            transaction: The Transaction object to be verified.
+            transaction: The CTransaction object to be verified.
 
         Returns:
             True if all signatures are valid, False otherwise.
         """
         # Create a copy of the transaction (without the script signatures).
         inputs = [
-            TxIn(tx_in.prevout, b'') 
+            CTxIn(tx_in.prevout, b'') 
             for tx_in in copy.deepcopy(transaction.vin)
         ]
         outputs = copy.deepcopy(transaction.vout)
 
         # Hash the unsigned transaction
-        transaction_hash = Transaction(inputs, outputs).hash()
+        transaction_hash = CTransaction(vin=inputs, vout=outputs).get_hash()
 
         for i, tx_in in enumerate(transaction.vin):
             # Verify the signature
             try:
-                self.verify(transaction_hash, tx_in.script_sig) 
+                self.verify(transaction_hash, tx_in.scriptSig) 
             except:
                 return False  # Signature verification failed
 
@@ -210,15 +210,15 @@ def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey
         miner_script_pubkey (bytes): The script public key of the miner's address.
 
     Returns:
-        Transaction: A new coinbase transaction instance.
+        CTransaction: A new coinbase transaction instance.
     """
-    coinbase_input = TxIn(
-        prevout=Outpoint(hash=b'\x00' * 32, index=0xffffffff),  # Special prevout for coinbase
-        script_sig=coinbase_data
+    coinbase_input = CTxIn(
+        prevout=COutPoint(hash=bytes(32), n=0xffffffff),  # Special prevout for coinbase
+        scriptSig=coinbase_data
     )
-    coinbase_output = TxOut(value=miner_reward, script_pubkey=miner_script_pubkey)
+    coinbase_output = CTxOut(nValue=miner_reward, scriptPubKey=miner_script_pubkey)
 
-    return Transaction(vin=[coinbase_input], vout=[coinbase_output])
+    return CTransaction(vin=[coinbase_input], vout=[coinbase_output])
 
 
 def main():
@@ -250,7 +250,7 @@ def main():
     signed_transaction = wallet.sign_transaction(coinbase)
 
     # Verify the signatures
-    is_valid = wallet.verify_transaction_signature(signed_transaction, coinbase)
+    is_valid = wallet.verify_transaction_signature(signed_transaction)
     print(f"Transaction signatures are valid: {is_valid}")
 
 

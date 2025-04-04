@@ -1,76 +1,73 @@
-from hashlib import sha256
 import io
 from datetime import datetime
+from hashlib import sha256
 
-from transaction import Outpoint
-from transaction import TxIn
-from transaction import TxOut
-from transaction import Transaction
+from transaction import COutPoint
+from transaction import CTxIn
+from transaction import CTxOut
+from transaction import CTransaction
 
 
-class Block:
-    def __init__(self, version, prev_block, merkle_root, time, bits, nonce):
-        """
-        Initializes a Block instance.
+class CBlockHeader:
+    def __init__(self, nVersion: int, hashPrevBlock: bytes, hashMerkleRoot: bytes,
+                 nTime: int, nBits: int, nNonce: int):
+        self.nVersion = nVersion
+        self.hashPrevBlock = hashPrevBlock
+        self.hashMerkleRoot = hashMerkleRoot
+        self.nTime = nTime
+        self.nBits = nBits
+        self.nNonce = nNonce
 
-        Args:
-            version (int): The block version number.
-            prev_block (bytes): The hash of the previous block in the blockchain.
-            merkle_root (bytes): The Merkle root hash of the block's transactions.
-            time (int): The Unix epoch time when the miner started hashing the header.
-            bits (int): The difficulty target for block hash.
-            nonce (int): The nonce value used in the block header hashing.
-        """
-        self.version = version
-        self.prev_block = prev_block
-        self.merkle_root = merkle_root
-        self.time = time  # Unix epoch time when the miner started hashing the header
-        self.bits = bits
-        self.nonce = nonce
-        self.vtx = []
 
-    def add_transaction(self, transaction):
-        self.vtx.append(transaction)
+class CBlock(CBlockHeader):
+    def __init__(self, header: CBlockHeader, vtx: list[CTransaction]):
+        super().__init__(header.nVersion, header.hashPrevBlock, header.hashMerkleRoot,
+                         header.nTime, header.nBits, header.nNonce)
+        self.vtx = vtx
+        self.vMerkleTree = []
 
-    def _merkle_root(self):
-        """Calculate the Merkle root for the block's transactions"""
-        tx_hashes = [tx.hash() for tx in self.vtx]
+    def build_merkle_root(self) -> bytes:
+        self.vMerkleTree.clear()
+        for tx in self.vtx:
+            self.vMerkleTree.append(tx.get_hash())
 
-        # If a block only has a coinbase transaction, the TXID is used as merkle root hash
-        while len(tx_hashes) > 1:
-            if len(tx_hashes) % 2 != 0:  # Ensure even number of hashes
-                tx_hashes.append(tx_hashes[-1])
+        if not self.vMerkleTree:
+            return bytes(32)
+        
+        hashes = [h for h in self.vMerkleTree]  # Bitcoin's internal byte order
+        while len(hashes) > 1:
+            if len(hashes) % 2 != 0:
+                hashes.append(hashes[-1])
+            hashes = [sha256(sha256(h1 + h2).digest()).digest()
+                    for i in range(0, len(hashes), 2)
+                    for h1, h2 in (hashes[i], hashes[i+1])]
+        return hashes[0]
 
-            tx_hashes = [
-                sha256((tx_hashes[i] + tx_hashes[i + 1])).digest()
-                for i in range(0, len(tx_hashes), 2)
-            ]
-
-        self.merkle_root = tx_hashes[0] if tx_hashes else b''
-        return self.merkle_root
-
-    def serialize(self):
+    def serialize_header(self):
         """Serializes the block header into a byte string"""
         stream = io.BytesIO()
-        stream.write(self.prev_block)
-        stream.write(self.merkle_root)
-        stream.write(self.time.to_bytes(4, 'little'))
-        stream.write(self.nonce.to_bytes(4, 'little'))
+        # Use original byte order without reversal
+        stream.write(self.nVersion.to_bytes(4, 'little'))
+        stream.write(self.hashPrevBlock)  # Already in correct byte order
+        stream.write(self.hashMerkleRoot)
+        stream.write(self.nTime.to_bytes(4, 'little'))
+        stream.write(self.nBits.to_bytes(4, 'little'))
+        stream.write(self.nNonce.to_bytes(4, 'little'))
         return stream.getvalue()
 
-    def hash(self):
+    def get_hash(self):
         """Calculate the block's hash"""
-        raw_block = self.serialize()
-        return sha256(sha256(raw_block).digest()).digest()
+        header_data = self.serialize_header()
+        _hash = sha256(sha256(header_data).digest()).digest()
+        return _hash
 
     def mine(self):
         """Mine the block by finding a valid nonce."""
-        self.time = int(datetime.now().timestamp())
-        target = (1 << (256 - self.bits)) - 1  # Calculate target from bits
+        self.nTime = int(datetime.now().timestamp())
+        target = (1 << (256 - self.nBits)) - 1  # Calculate target from nBits
 
-        while int(self.hash().hex(), 16) > target:
-            self.nonce += 1
-
+        while int(self.get_hash().hex(), 16) > target:
+            self.nNonce += 1
 
 def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey):
     """
@@ -82,15 +79,15 @@ def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey
         miner_script_pubkey (bytes): The script public key of the miner's address.
 
     Returns:
-        Transaction: A new coinbase transaction instance.
+        CTransaction: A new coinbase transaction instance.
     """
-    coinbase_input = TxIn(
-        prevout=Outpoint(hash=b'\x00' * 32, index=0xffffffff),  # Special prevout for coinbase
-        script_sig=coinbase_data
+    coinbase_input = CTxIn(
+        prevout=COutPoint(bytes(32), n=0xffffffff),  # Special prevout for coinbase
+        scriptSig=coinbase_data
     )
-    coinbase_output = TxOut(value=miner_reward, script_pubkey=miner_script_pubkey)
+    coinbase_output = CTxOut(nValue=miner_reward, scriptPubKey=miner_script_pubkey)
 
-    return Transaction(vin=[coinbase_input], vout=[coinbase_output])
+    return CTransaction(vin=[coinbase_input], vout=[coinbase_output])
 
 
 def main():
@@ -105,31 +102,31 @@ def main():
 
     # Serialize and hash the transaction
     raw_transaction = coinbase.serialize()
-    tx_hash = coinbase.hash()
-    print(f"Coinbase Hash: {tx_hash.hex()}")
+    tx_hash = coinbase.get_hash()
+    print(f"Coinbase Hash: {tx_hash.hex()[::-1]}")
 
     # Create a block
-    block = Block(
-        version=1,
-        prev_block=b'\x00' * 32,
-        merkle_root="",
-        time=int(datetime.now().timestamp()),
-        bits=20,  # Simplified difficulty for demonstration
-        nonce=0,
-    )
+    block_header = CBlockHeader(
+        nVersion=1,
+        hashPrevBlock=bytes(32),
+        hashMerkleRoot="",
+        nTime=int(datetime.now().timestamp()),
+        nBits=16,  # Simplified difficulty for demonstration
+        nNonce=0,
 
-    block.add_transaction(coinbase)
-    block.merkle_root = block._merkle_root()  # Calculate Merkle root
+    )
+    block = CBlock(header=block_header, vtx=[coinbase])
+    block.hashMerkleRoot = block.build_merkle_root()  # Calculate Merkle root
 
     # Mine the block
     block.mine()
 
-    print("Previous Block:", block.prev_block.hex())
-    print("Merkle Root:", block.merkle_root.hex())
-    print(f"Block Timestamp: {datetime.fromtimestamp(block.time)} ({block.time} seconds since January 1st, 1970)")
-    print("Nonce:", block.nonce)
-    print("Block Data:", block.serialize().hex())
-    print("Block Hash:", block.hash().hex())
+    print("Previous Block:", block.hashPrevBlock.hex()[::-1])
+    print("Merkle Root:", block.hashMerkleRoot.hex()[::-1])
+    print(f"Block Timestamp: {datetime.fromtimestamp(block.nTime)} ({block.nTime} seconds since January 1st, 1970)")
+    print("Nonce:", block.nNonce)
+    print("Block Header:", block.serialize_header().hex())
+    print("Block Hash:", block.get_hash().hex()[::-1])
 
 if __name__ == '__main__':
     main()

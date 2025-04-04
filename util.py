@@ -1,3 +1,10 @@
+def int_to_bytes(num, size):
+        return num.to_bytes(size, byteorder="big")
+
+def reverse_endian(hex_bytes):
+    """Converts little-endian to big-endian (or vice versa)."""
+    return bytes(reversed(hex_bytes))
+
 
 def bitcoins_to_satoshis(bitcoins):
     """

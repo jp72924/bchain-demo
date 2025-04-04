@@ -1,14 +1,7 @@
-import hashlib
 import math
 import json
 
-def sha256(data):
-    # Convert data to bytes if it's not already
-    if isinstance(data, str):
-        data = data.encode('utf-8')
-    # Calculate SHA-256 hash
-    sha256_hash = hashlib.sha256(data).hexdigest()
-    return sha256_hash
+from hashlib import sha256
 
 
 def binary_heap_levels(n):
@@ -73,6 +66,44 @@ def binary_heap_to_nested_dict(heap, index=0, depth=0):
         "left": binary_heap_to_nested_dict(heap, 2 * index + 1, depth + 1),
         "right": binary_heap_to_nested_dict(heap, 2 * index + 2, depth + 1)
     }
+
+
+def find_mismatches(tree_a, tree_b, index=0, mismatches=None):
+    """
+    Compares two Merkle trees and returns indices where node hashes differ.
+    
+    Args:
+        tree_a (list): First Merkle tree represented as a binary heap
+        tree_b (list): Second Merkle tree represented as a binary heap
+        index (int): Index to start comparison from (default: root=0)
+        mismatches (list): Accumulator for recursion (should not be provided by caller)
+    
+    Returns:
+        List of indices where node hashes differ between the two trees
+    
+    Example:
+        mismatches = find_mismatched_nodes(tree1, tree2)
+    """
+    if mismatches is None:
+        mismatches = []
+
+    # Check if current index is valid for both trees
+    if index >= len(tree_a) or index >= len(tree_b):
+        return mismatches
+
+    # Record mismatch if hashes differ at current index
+    if tree_a[index] != tree_b[index]:
+        mismatches.append(index)
+
+        # Recursively check child nodes
+        left_child, right_child = get_children(index, len(tree_a))
+        
+        if left_child is not None:
+            find_mismatches(tree_a, tree_b, left_child, mismatches)
+        if right_child is not None:
+            find_mismatches(tree_a, tree_b, right_child, mismatches)
+
+    return mismatches
 
 
 def merkle_root(iterable):

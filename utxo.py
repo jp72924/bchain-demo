@@ -1,7 +1,7 @@
-from transaction import Outpoint
-from transaction import TxIn
-from transaction import TxOut
-from transaction import Transaction
+from transaction import COutPoint
+from transaction import CTxIn
+from transaction import CTxOut
+from transaction import CTransaction
 import copy
 
 
@@ -22,13 +22,13 @@ class UTXOSet:
         if self.is_unspent(prevout):
             del self.utxos[prevout]
         else:
-            raise ValueError(f"UTXO ({prevout.hash.hex()}, {prevout.index}) not found or already spent.")
+            raise ValueError(f"UTXO ({prevout.hash.hex()}, {prevout.n}) not found or already spent.")
 
     def is_unspent(self, prevout):
         return prevout in self.utxos
 
-    def get_balance(self, script_pubkey=None):
-        return sum(tx_out.value for tx_out in self.utxos.values() if tx_out.script_pubkey == script_pubkey or script_pubkey == None)
+    def get_balance(self, scriptPubKey=None):
+        return sum(tx_out.nValue for tx_out in self.utxos.values() if tx_out.scriptPubKey == scriptPubKey or scriptPubKey == None)
 
     def __repr__(self):
         return f"UTXOSet({list(self.utxos.values())})"
@@ -44,15 +44,15 @@ def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey
         miner_script_pubkey (bytes): The script public key of the miner's address.
 
     Returns:
-        Transaction: A new coinbase transaction instance.
+        CTransaction: A new coinbase transaction instance.
     """
-    coinbase_input = TxIn(
-        prevout=Outpoint(hash=b'\x00' * 32, index=0xffffffff),  # Special prevout for coinbase
-        script_sig=coinbase_data
+    coinbase_input = CTxIn(
+        prevout=COutPoint(hash=bytes(32), n=0xffffffff),  # Special prevout for coinbase
+        scriptSig=coinbase_data
     )
-    coinbase_output = TxOut(value=miner_reward, script_pubkey=miner_script_pubkey)
+    coinbase_output = CTxOut(nValue=miner_reward, scriptPubKey=miner_script_pubkey)
 
-    return Transaction(vin=[coinbase_input], vout=[coinbase_output])
+    return CTransaction(vin=[coinbase_input], vout=[coinbase_output])
 
 
 def main():
@@ -67,7 +67,7 @@ def main():
     )
 
     # Serialize and hash the transaction
-    tx_hash = coinbase.hash()
+    tx_hash = coinbase.get_hash()
     print(f"Transaction Hash: {tx_hash.hex()}")
 
     utxo_set = UTXOSet()
@@ -78,7 +78,7 @@ def main():
             utxo_set.spend(tx_in.prevout)
 
     for index, tx_out in enumerate(tx.vout):
-        outpoint = Outpoint(tx.hash(), index)
+        outpoint = COutPoint(tx.get_hash(), index)
         new_utxo = UTXO(outpoint, tx_out)
         utxo_set.add(new_utxo)
 

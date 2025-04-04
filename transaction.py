@@ -1,59 +1,64 @@
 from hashlib import sha256
 import io
+from serialize import compact_size
 
 
-class Outpoint:
-    def __init__(self, hash, index):
+class COutPoint:
+    def __init__(self, hash: bytes = bytes(32), n: int = 0xffffffff):
+        if len(hash) != 32:
+            raise ValueError("COutPoint hash must be 32 bytes")
         self.hash = hash
-        self.index = index
+        self.n = n
 
     def __repr__(self):
-        return f"Outpoint(hash={self.hash.hex()}, index={self.index})"
+        return f"COutPoint(hash={self.hash.hex()}, n={self.n})"
 
     def __hash__(self):
         return hash(self.__repr__())
 
     def __eq__(self, other):
-        if not isinstance(other, Outpoint):
+        if not isinstance(other, COutPoint):
             # Don't attempt to compare against unrelated types
             return NotImplemented
-        return self.hash == other.hash and self.index == other.index
+        return self.hash == other.hash and self.n == other.n
 
     def is_null(self):
         """
-        Checks if the Outpoint is a null outpoint.
+        Checks if the COutPoint is a null outpoint.
 
         A null outpoint is defined as having a hash of all zeros 
         and an index of 0xffffffff.
 
         Returns:
-            bool: True if the Outpoint is a null outpoint, False otherwise.
+            bool: True if the COutPoint is a null outpoint, False otherwise.
         """
-        return self.hash == b'\x00' * 32 and self.index == 0xffffffff
+        return self.hash == bytes(32) and self.n == 0xffffffff
 
 
-class TxIn:
-    def __init__(self, prevout, script_sig):
+class CTxIn:
+    def __init__(self, prevout: COutPoint, scriptSig: bytes):
         self.prevout = prevout
-        self.script_sig = script_sig
+        self.scriptSig = scriptSig
 
     def __repr__(self):
-        return f"TxIn(prevout={self.prevout}, script_sig={self.script_sig})"
+        return f"CTxIn(prevout={self.prevout}, scriptSig={self.scriptSig})"
 
 
-class TxOut:
-    def __init__(self, value, script_pubkey):
-        self.value = value
-        self.script_pubkey = script_pubkey
+class CTxOut:
+    def __init__(self, nValue: int, scriptPubKey: bytes):
+        self.nValue = nValue  # Renamed field
+        self.scriptPubKey = scriptPubKey  # Case correction
 
     def __repr__(self):
-        return f"TxOut(value={self.value}, script_pubkey={self.script_pubkey.hex()})"
+        return f"CTxOut(nValue={self.nValue}, scriptPubKey={self.scriptPubKey.hex()})"
 
 
-class Transaction:
-    def __init__(self, vin=[], vout=[]):
-        self.vin = vin
-        self.vout = vout
+class CTransaction:
+    def __init__(self, nVersion: int = 1, vin: list[CTxIn] = None, 
+                 vout: list[CTxOut] = None):
+        self.nVersion = nVersion  # Added version field
+        self.vin = vin or []
+        self.vout = vout or []
 
     def is_coinbase(self):
         """
@@ -75,19 +80,19 @@ class Transaction:
         stream.write(len(self.vin).to_bytes(4, 'little'))
         for tx_in in self.vin:
             stream.write(tx_in.prevout.hash)
-            stream.write(tx_in.prevout.index.to_bytes(4, 'little'))
-            stream.write(len(tx_in.script_sig).to_bytes(4, 'little'))
-            stream.write(tx_in.script_sig)
+            stream.write(tx_in.prevout.n.to_bytes(4, 'little'))
+            stream.write(compact_size(len(tx_in.scriptSig)))
+            stream.write(tx_in.scriptSig)
 
         stream.write(len(self.vout).to_bytes(4, 'little'))
         for tx_out in self.vout:
-            stream.write(tx_out.value.to_bytes(8, 'little'))
-            stream.write(len(tx_out.script_pubkey).to_bytes(4, 'little'))
-            stream.write(tx_out.script_pubkey)
+            stream.write(tx_out.nValue.to_bytes(8, 'little'))
+            stream.write(compact_size(len(tx_out.scriptPubKey)))
+            stream.write(tx_out.scriptPubKey)
 
         return stream.getvalue()
 
-    def hash(self):
+    def get_hash(self):
         """Calculates the transaction hash"""
         raw_transaction = self.serialize()
         return sha256(sha256(raw_transaction).digest()).digest()
@@ -95,27 +100,27 @@ class Transaction:
 
 def main():
     # Create sample UTXOs
-    prevout = Outpoint(
-        hash=bytes.fromhex("0" * 64),
-        index=int('0xffffffff', 16),  # 2 ^ 32 (maximun value)
+    prevout = COutPoint(
+        hash=bytes(32),
+        n=int('0xffffffff', 16),  # 2 ^ 32 (maximun nValue)
     )
 
-    tx_in = TxIn(
+    tx_in = CTxIn(
         prevout=prevout,
-        script_sig=b''  # Sender's signature (signs transaction hash using the private key)
+        scriptSig=b''  # Sender's signature (signs transaction hash using the private key)
     )
 
-    tx_out = TxOut(
-        value=5000000000,  # 50 Bitcoins (5,000,000,000 sats)
-        script_pubkey=bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")  # Recipient's public key (bytes)
+    tx_out = CTxOut(
+        nValue=5000000000,  # 50 Bitcoins (5,000,000,000 sats)
+        scriptPubKey=bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")  # Recipient's public key (bytes)
     )
 
     # Create a transaction
-    coinbase = Transaction(vin=[tx_in], vout=[tx_out])
+    coinbase = CTransaction(vin=[tx_in], vout=[tx_out])
 
     # Serialize and hash the transaction
     raw_transaction = coinbase.serialize()
-    tx_hash = coinbase.hash()
+    tx_hash = coinbase.get_hash()
 
     print(f"Serialized Transaction: {raw_transaction.hex()}")
     print(f"Transaction Hash: {tx_hash.hex()}")
