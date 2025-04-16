@@ -34,9 +34,12 @@ class COutPoint:
         """
         return self.hash == bytes(32) and self.n == 0xffffffff
 
+    def serialize(self) -> bytes:
+        return self.hash + self.n.to_bytes(4, 'little')
+
 
 class CTxIn:
-    def __init__(self, prevout: COutPoint, scriptSig: bytes, nSequence: int = 0xffffffff):
+    def __init__(self, prevout: COutPoint, scriptSig: 'CScript', nSequence: int = 0xffffffff):
         self.prevout = prevout
         self.scriptSig = scriptSig
         self.nSequence = nSequence
@@ -44,15 +47,28 @@ class CTxIn:
     def __repr__(self):
         return f"CTxIn(prevout={self.prevout}, scriptSig={self.scriptSig}, nSequence={self.nSequence})"  
 
+    def serialize(self) -> bytes:
+        return (
+            self.prevout.serialize() +
+            compact_size(len(self.scriptSig.data)) +
+            self.scriptSig.data +
+            self.nSequence.to_bytes(4, 'little')
+        )
 
 class CTxOut:
-    def __init__(self, nValue: int, scriptPubKey: bytes):
+    def __init__(self, nValue: int, scriptPubKey: 'CScript'):
         self.nValue = nValue  # Renamed field
         self.scriptPubKey = scriptPubKey  # Case correction
 
     def __repr__(self):
         return f"CTxOut(nValue={self.nValue}, scriptPubKey={self.scriptPubKey.hex()})"
 
+    def serialize(self) -> bytes:
+        return (
+            self.nValue.to_bytes(8, 'little') +
+            compact_size(len(self.scriptPubKey.data)) +
+            self.scriptPubKey.data
+        )
 
 class CTransaction:
     def __init__(self, nVersion: int = 1, vin: list[CTxIn] = None, 
@@ -78,27 +94,21 @@ class CTransaction:
     def serialize(self):
         """Serializes the transaction into a byte string"""
         stream = io.BytesIO()
-        
-        # Write version field (4 bytes, little-endian)
+        # Version
         stream.write(self.nVersion.to_bytes(4, 'little'))
-
-        # Write number of inputs
-        stream.write(compact_size(len(self.vin)))  
-        for tx_in in self.vin:
-            stream.write(tx_in.prevout.hash)
-            stream.write(tx_in.prevout.n.to_bytes(4, 'little'))
-            stream.write(compact_size(len(tx_in.scriptSig)))
-            stream.write(tx_in.scriptSig)
-            stream.write(tx_in.nSequence.to_bytes(4, 'little'))
-
-        # Write number of outputs
-        stream.write(compact_size(len(self.vout)))  
-        for tx_out in self.vout:
-            stream.write(tx_out.nValue.to_bytes(8, 'little'))
-            stream.write(compact_size(len(tx_out.scriptPubKey)))
-            stream.write(tx_out.scriptPubKey)
-
-        stream.write(self.nLockTime.to_bytes(4, 'little'))  
+        
+        # Inputs
+        stream.write(compact_size(len(self.vin)))
+        for txin in self.vin:
+            stream.write(txin.serialize())
+        
+        # Outputs
+        stream.write(compact_size(len(self.vout)))
+        for txout in self.vout:
+            stream.write(txout.serialize())
+        
+        # Lock time
+        stream.write(self.nLockTime.to_bytes(4, 'little'))
         return stream.getvalue()
 
     def get_hash(self):
