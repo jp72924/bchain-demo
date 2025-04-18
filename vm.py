@@ -330,10 +330,7 @@ class VirtualMachine:
         self.flags['Overflow'] = (original_signed == self.min_signed)
 
     def mov(self, dest, src):
-        if src in self.registers:
-            self.registers[dest] = self.registers[src]
-        else:
-            self.registers[dest] = self._get_value(src)
+        self.registers[dest] = self._get_value(src)
 
     def ror(self, reg, count):
         value = self.registers[reg]
