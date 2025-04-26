@@ -1,6 +1,18 @@
 from typing import List, Union
 from transaction import CTransaction, CTxIn
-from crypto import decode_num, verify_signature, sha256, ripemd160, hash256
+from crypto import sha256, ripemd160, hash256
+
+# --------------------------
+# Helper functions
+# --------------------------
+
+def decode_num(data: bytes) -> int:
+    """Decodes a numeric value from the stack (little-endian, signed)"""
+    if not data:
+        return 0
+    # Reverse for little-endian, handle negative sign
+    n = int.from_bytes(data, byteorder='little', signed=True)
+    return n
 
 # --------------------------
 # Script Opcodes (Partial List)
@@ -116,6 +128,9 @@ OP_EQUALVERIFY = 0x88
 OP_CHECKSIG = 0xac
 OP_CHECKMULTISIG = 0xae
 
+# --------------------------
+# Core Data Structures
+# --------------------------
 
 class CScript:
     MAX_SCRIPT_SIZE = 10000

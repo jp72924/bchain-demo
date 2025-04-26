@@ -56,13 +56,3 @@ def hash256(data: bytes) -> bytes:
         Commonly used in Bitcoin's transaction and block hashing
     """
     return sha256(sha256(data))
-
-
-def decode_num(data: bytes) -> int:
-    """Decodes a numeric value from the stack (little-endian, signed)"""
-    if not data:
-        return 0
-    # Reverse for little-endian, handle negative sign
-    n = int.from_bytes(data, byteorder='little', signed=True)
-    return n
-
