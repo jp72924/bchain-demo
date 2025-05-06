@@ -221,6 +221,13 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                 data = stack.pop()
                 stack.append(ripemd160(sha256(data)))
 
+            # --- Numeric Opcodes (Only if `op` is an integer) ---
+            elif isinstance(op, int) and op == OP_0:
+                stack.append(b'')
+            elif isinstance(op, int) and OP_1 <= op <= OP_16:
+                num = op - 0x50  # Translate opcode to number (OP_1=0x51 → 1)
+                stack.append(num.to_bytes(1, 'little', signed=True))
+
             # --- Crypto Operations ---
             elif op == OP_CHECKSIG:
                 if len(stack) < 2:

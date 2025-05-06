@@ -1,5 +1,6 @@
-from hashlib import sha256
 import io
+
+from crypto import hash256
 from serialize import compact_size
 
 
@@ -61,7 +62,7 @@ class CTxOut:
         self.scriptPubKey = scriptPubKey  # Case correction
 
     def __repr__(self):
-        return f"CTxOut(nValue={self.nValue}, scriptPubKey={self.scriptPubKey.hex()})"
+        return f"CTxOut(nValue={self.nValue}, scriptPubKey={self.scriptPubKey.data.hex()})"
 
     def serialize(self) -> bytes:
         return (
@@ -114,36 +115,4 @@ class CTransaction:
     def get_hash(self):
         """Calculates the transaction hash"""
         raw_transaction = self.serialize()
-        return sha256(sha256(raw_transaction).digest()).digest()
-
-
-def main():
-    # Create sample UTXOs
-    prevout = COutPoint(
-        hash=bytes(32),
-        n=int('0xffffffff', 16),  # 2 ^ 32 (maximun nValue)
-    )
-
-    tx_in = CTxIn(
-        prevout=prevout,
-        scriptSig=b''  # Sender's signature (signs transaction hash using the private key)
-    )
-
-    tx_out = CTxOut(
-        nValue=5000000000,  # 50 Bitcoins (5,000,000,000 sats)
-        scriptPubKey=bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")  # Recipient's public key (bytes)
-    )
-
-    # Create a transaction
-    coinbase = CTransaction(vin=[tx_in], vout=[tx_out])
-
-    # Serialize and hash the transaction
-    raw_transaction = coinbase.serialize()
-    tx_hash = coinbase.get_hash()
-
-    print(f"Serialized Transaction: {raw_transaction.hex()}")
-    print(f"Transaction Hash: {tx_hash.hex()}")
-
-
-if __name__ == '__main__':
-    main()
+        return hash256(raw_transaction)

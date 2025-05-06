@@ -1,7 +1,17 @@
+from crypto import hash160
+
 from transaction import COutPoint
 from transaction import CTxIn
 from transaction import CTxOut
 from transaction import CTransaction
+
+from script import CScript
+from script import OP_DUP
+from script import OP_HASH160
+from script import OP_PUSHBYTES_20
+from script import OP_EQUALVERIFY
+from script import OP_CHECKSIG
+
 from block import CBlockHeader
 from block import CBlock
 from utxo import UTXO
@@ -20,27 +30,36 @@ class Miner:
 
         self.miner_address = miner_address
 
-    def create_coinbase_transaction(self, coinbase_data, miner_reward, miner_script_pubkey):
+    def create_coinbase_transaction(self, coinbase_data, miner_reward, miner_pubkey):
         """
         Creates a new coinbase transaction paying the miner.
 
         Args:
             coinbase_data (bytes, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
             miner_reward (int): The amount of the miner reward in satoshis.
-            miner_script_pubkey (bytes): The script public key of the miner's address.
+            miner_pubkey_bytes (bytes): The script public key of the miner's address.
 
         Returns:
             CTransaction: A new coinbase transaction instance.
         """
-        coinbase_input = CTxIn(
-            prevout=COutPoint(bytes(32), n=0xffffffff),  # Special prevout for coinbase
-            scriptSig=coinbase_data
+        # Generate pubkey hash
+        pubkey_hash = hash160(miner_pubkey)
+
+        # Build P2PKH scriptPubKey
+        script_pubkey = CScript(
+            bytes([OP_DUP, OP_HASH160, OP_PUSHBYTES_20]) +  # 0x14 pushes 20 bytes
+            pubkey_hash +
+            bytes([OP_EQUALVERIFY, OP_CHECKSIG])
         )
-        coinbase_output = CTxOut(nValue=miner_reward, scriptPubKey=miner_script_pubkey)
 
-        return CTransaction(vin=[coinbase_input], vout=[coinbase_output])
+        # Create transaction
+        tx = CTransaction(
+            vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+            vout=[CTxOut(nValue=miner_reward, scriptPubKey=script_pubkey)]
+        )
+        return tx
 
-    def create_candidate_block(self, prev_block, transactions, bits, coinbase_data, miner_reward, miner_script_pubkey, time=None):
+    def create_candidate_block(self, prev_block, transactions, bits, coinbase_data, miner_reward, miner_pubkey, time=None):
         """
         Creates a new candidate block with a coinbase transaction.
 
@@ -63,7 +82,7 @@ class Miner:
         coinbase_tx = self.create_coinbase_transaction(
             coinbase_data=coinbase_data,
             miner_reward=miner_reward,
-            miner_script_pubkey=miner_script_pubkey
+            miner_pubkey=miner_pubkey
         )
 
         # Add coinbase transaction to the list of transactions
@@ -82,7 +101,7 @@ class Miner:
         block.hashMerkleRoot = block.build_merkle_root() 
         return block
 
-    def create_genesis_block(self, bits, coinbase_data, miner_reward, miner_script_pubkey):
+    def create_genesis_block(self, bits, coinbase_data, miner_reward, miner_pubkey):
         """
         Creates the genesis block.
 
@@ -104,7 +123,7 @@ class Miner:
             bits=bits, 
             coinbase_data=coinbase_data, 
             miner_reward=miner_reward, 
-            miner_script_pubkey=miner_script_pubkey,
+            miner_pubkey=miner_pubkey,
             time=None
         )
 
@@ -129,7 +148,7 @@ class Miner:
             bits=Miner.DIFFICULTY_BITS,
             coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little'),
             miner_reward=Miner.BLOCK_REWARD,
-            miner_script_pubkey=self.miner_address,
+            miner_pubkey=self.miner_address,
             time=None
         )
 
@@ -148,7 +167,7 @@ class Miner:
                 bits=Miner.DIFFICULTY_BITS,
                 coinbase_data=b'', 
                 miner_reward=Miner.BLOCK_REWARD, 
-                miner_script_pubkey=self.miner_address
+                miner_pubkey=self.miner_address
             )
             print("Genesis block created.")
             self.blockchain.append(genesis_block)

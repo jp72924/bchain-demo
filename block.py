@@ -1,11 +1,21 @@
 import io
+import script
 from datetime import datetime
-from hashlib import sha256
+
+from crypto import hash160
+from crypto import hash256
 
 from transaction import COutPoint
 from transaction import CTxIn
 from transaction import CTxOut
 from transaction import CTransaction
+
+from script import CScript
+from script import OP_DUP
+from script import OP_HASH160
+from script import OP_PUSHBYTES_20
+from script import OP_EQUALVERIFY
+from script import OP_CHECKSIG
 
 
 class CBlockHeader:
@@ -38,7 +48,7 @@ class CBlock(CBlockHeader):
         while len(hashes) > 1:
             if len(hashes) % 2 != 0:
                 hashes.append(hashes[-1])
-            hashes = [sha256(sha256(h1 + h2).digest()).digest()
+            hashes = [hash256(h1 + h2)
                     for i in range(0, len(hashes), 2)
                     for h1, h2 in (hashes[i], hashes[i+1])]
         return hashes[0]
@@ -58,7 +68,7 @@ class CBlock(CBlockHeader):
     def get_hash(self):
         """Calculate the block's hash"""
         header_data = self.serialize_header()
-        _hash = sha256(sha256(header_data).digest()).digest()
+        _hash = hash256(header_data)
         return _hash
 
     def mine(self):
@@ -69,35 +79,44 @@ class CBlock(CBlockHeader):
         while int(self.get_hash().hex(), 16) > target:
             self.nNonce += 1
 
-def create_coinbase_transaction(coinbase_data, miner_reward, miner_script_pubkey):
+def create_coinbase_transaction(coinbase_data, miner_reward, miner_pubkey):
     """
     Creates a new coinbase transaction paying the miner.
 
     Args:
         coinbase_data (bytes, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
         miner_reward (int): The amount of the miner reward in satoshis.
-        miner_script_pubkey (bytes): The script public key of the miner's address.
+        miner_pubkey_bytes (bytes): The script public key of the miner's address.
 
     Returns:
         CTransaction: A new coinbase transaction instance.
     """
-    coinbase_input = CTxIn(
-        prevout=COutPoint(bytes(32), n=0xffffffff),  # Special prevout for coinbase
-        scriptSig=coinbase_data
-    )
-    coinbase_output = CTxOut(nValue=miner_reward, scriptPubKey=miner_script_pubkey)
+    # Generate pubkey hash
+    pubkey_hash = hash160(miner_pubkey)
 
-    return CTransaction(vin=[coinbase_input], vout=[coinbase_output])
+    # Build P2PKH scriptPubKey
+    script_pubkey = CScript(
+        bytes([OP_DUP, OP_HASH160, OP_PUSHBYTES_20]) +  # 0x14 pushes 20 bytes
+        pubkey_hash +
+        bytes([OP_EQUALVERIFY, OP_CHECKSIG])
+    )
+
+    # Create transaction
+    tx = CTransaction(
+        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+        vout=[CTxOut(nValue=miner_reward, scriptPubKey=script_pubkey)]
+    )
+    return tx
 
 
 def main():
-    public_key = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
+    pubkey = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
     
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
         coinbase_data=b'',
         miner_reward=5000000000,
-        miner_script_pubkey=public_key
+        miner_pubkey=pubkey
     )
 
     # Serialize and hash the transaction
