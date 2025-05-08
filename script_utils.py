@@ -1,5 +1,6 @@
 from crypto import hash160
-from script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_1, OP_CHECKMULTISIG
+from script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_1, OP_CHECKMULTISIG, OP_EQUAL, OP_0
+
 
 class ScriptBuilder:
     @staticmethod
@@ -45,34 +46,44 @@ class ScriptBuilder:
         )
 
     @classmethod
-    def multisig(cls, m: int, pubkeys: list[bytes]) -> CScript:
-        """Build M-of-N multisig script (for extension example)"""
+    def p2ms(cls, m: int, pubkeys: list[bytes]) -> CScript:
+        """Build M-of-N multisig script"""
         if not 1 <= m <= 16:
             raise ValueError("m must be between 1-16")
         if len(pubkeys) < m or len(pubkeys) > 16:
-            raise ValueError("Invalid number of pubkeys")
+            raise ValueError("Invalid number of pubkeys (1-16)")
 
-        ops = [bytes([OP_1 + m - 1])]  # Convert to OP_1-OP_16
+        script = bytes([OP_1 + m - 1])  # Convert to OP_1-OP_16
         for pk in pubkeys:
-            ops.append(cls._push_data(pk))
-        ops.append(bytes([OP_1 + len(pubkeys) - 1, OP_CHECKMULTISIG]))
+            script += cls._push_data(pk)
+        script += bytes([OP_1 + len(pubkeys) - 1, OP_CHECKMULTISIG])
         
-        return CScript(b''.join(ops))
+        return CScript(script)
+
+    @classmethod
+    def p2sh(cls, redeem_script: CScript) -> CScript:
+        """Build Pay-to-Script-Hash (P2SH) script"""
+        script_hash = hash160(redeem_script.data)
+        return CScript(
+            bytes([OP_HASH160]) +
+            cls._push_data(script_hash) +
+            bytes([OP_EQUAL])
+        )
 
 
 if __name__ == '__main__':
-    # For 33-byte compressed public key
-    pubkey_bytes = bytes.fromhex("026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20")
-    p2pk_script = ScriptBuilder.p2pk(pubkey_bytes)
-    # Result: <33-byte push> <pubkey> OP_CHECKSIG
-
-    # From public key (auto-hashes)
-    p2pkh_script = ScriptBuilder.p2pkh(pubkey_bytes)
-    # From existing hash (20-byte)
-    pubkey_hash = hash160(pubkey_bytes)
-    _p2pkh_script = ScriptBuilder.p2pkh(pubkey_hash, is_hash=True)
-    # Result: OP_DUP OP_HASH160 <20-byte push> <hash> OP_EQUALVERIFY OP_CHECKSIG
-
-    print(f"P2PK: {p2pk_script}")
-    print(f"P2PKH: {p2pkh_script}")
-    print(f"P2PKH (auto-hash): {_p2pkh_script}")
+    # Example usage
+    from ecdsa import SigningKey, SECP256k1
+    
+    # Generate test keys
+    sk1 = SigningKey.generate(curve=SECP256k1)
+    pk1 = sk1.get_verifying_key().to_string("compressed")
+    
+    sk2 = SigningKey.generate(curve=SECP256k1)
+    pk2 = sk2.get_verifying_key().to_string("compressed")
+    
+    # P2SH example with 2-of-2 multisig
+    redeem_script = ScriptBuilder.p2ms(2, [pk1, pk2])
+    p2sh_script = ScriptBuilder.p2sh(redeem_script)
+    print(f"Redeem script: {redeem_script}")
+    print(f"P2SH scriptPubKey: {p2sh_script}")

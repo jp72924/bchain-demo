@@ -2,7 +2,7 @@ from transaction import COutPoint, CTxIn, CTxOut, CTransaction
 from script import verify_script
 from crypto import sha256, ripemd160
 from script import signature_hash, CScript
-from script import SIGHASH_ALL, OP_DUP, OP_HASH160, OP_PUSHBYTES_20, OP_0, OP_2, OP_3, OP_CHECKMULTISIG, OP_PUSHBYTES_33, OP_PUSHDATA1, OP_EQUALVERIFY, OP_CHECKSIG
+from script import SIGHASH_ALL, OP_DUP, OP_HASH160, OP_PUSHBYTES_20, OP_EQUAL, OP_0, OP_2, OP_3, OP_CHECKMULTISIG, OP_PUSHBYTES_33, OP_PUSHDATA1, OP_EQUALVERIFY, OP_CHECKSIG
 import hashlib
 from ecdsa import SigningKey, SECP256k1
 from script_utils import ScriptBuilder
@@ -12,6 +12,7 @@ from script_utils import ScriptBuilder
 # --------------------------
 
 if __name__ == "__main__":
+    # --- P2PK Test Case ---
     # Generate key pair
     sk = SigningKey.generate(curve=SECP256k1)
     vk = sk.get_verifying_key()
@@ -39,6 +40,7 @@ if __name__ == "__main__":
     tx.vin[0].scriptSig = script_sig
     print("P2PK Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
 
+    # --- P2PKH Test Case ---
     # Generate pubkey hash
     pubkey_hash = ripemd160(sha256(pubkey))
 
@@ -68,6 +70,7 @@ if __name__ == "__main__":
     tx.vin[0].scriptSig = script_sig
     print("P2PKH Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
 
+    # --- P2MS Test Case ---
     # Generate 3 key pairs
     sk1 = SigningKey.generate(curve=SECP256k1)
     vk1 = sk1.get_verifying_key()
@@ -112,3 +115,50 @@ if __name__ == "__main__":
     # Attach and verify
     tx.vin[0].scriptSig = script_sig
     print("P2MS Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
+
+    # --- P2SH Test Case ---
+    # Generate 2-of-2 multisig redeem script
+    sk1 = SigningKey.generate(curve=SECP256k1)
+    vk1 = sk1.get_verifying_key()
+    pubkey1 = vk1.to_string("compressed")
+
+    sk2 = SigningKey.generate(curve=SECP256k1)
+    vk2 = sk2.get_verifying_key()
+    pubkey2 = vk2.to_string("compressed")
+
+    redeem_script = CScript(
+        bytes([OP_2]) +
+        bytes([OP_PUSHDATA1, len(pubkey1)]) + pubkey1 +
+        bytes([OP_PUSHDATA1, len(pubkey2)]) + pubkey2 +
+        bytes([OP_2, OP_CHECKMULTISIG])
+    )
+    redeem_script_hash = ripemd160(sha256(redeem_script.data))
+
+    # P2SH scriptPubKey
+    script_pubkey = CScript(
+        bytes([OP_HASH160, OP_PUSHBYTES_20]) + redeem_script_hash +
+        bytes([OP_EQUAL])
+    )
+
+    # Create transaction spending P2SH output
+    tx = CTransaction(
+        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+        vout=[CTxOut(50_000_000, script_pubkey)]
+    )
+
+    # Sign with both keys
+    sighash = signature_hash(tx, 0, redeem_script, SIGHASH_ALL)  # Note: redeem_script used for sighash
+    sig1 = sk1.sign(sighash, hashfunc=hashlib.sha256) + bytes([SIGHASH_ALL])
+    sig2 = sk2.sign(sighash, hashfunc=hashlib.sha256) + bytes([SIGHASH_ALL])
+
+    # Build scriptSig with signatures and redeem script
+    script_sig = CScript(
+        bytes([OP_0]) +  # Multisig dummy
+        bytes([OP_PUSHDATA1, len(sig1)]) + sig1 +
+        bytes([OP_PUSHDATA1, len(sig2)]) + sig2 +
+        bytes([OP_PUSHDATA1, len(redeem_script.data)]) + redeem_script.data
+    )
+
+    # Attach and verify
+    tx.vin[0].scriptSig = script_sig
+    print("P2SH Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Should output True

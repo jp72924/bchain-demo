@@ -347,29 +347,60 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
         return False
 
 
+def is_p2sh(script_pubkey: CScript) -> bool:
+    """Check if script is a P2SH scriptPubKey."""
+    ops = script_pubkey.ops
+    return (len(ops) == 3 and
+            ops[0] == OP_HASH160 and
+            isinstance(ops[1], bytes) and len(ops[1]) == 20 and
+            ops[2] == OP_EQUAL)
+
+
 def verify_script(script_sig: CScript, script_pubkey: CScript, tx: CTransaction, input_index: int) -> bool:
     """
     Bitcoin v0.1 script verification logic
     Returns True if script executes successfully
     """
 
-    # Check individual script sizes
+    # Check script sizes
     if (len(script_sig.data) > CScript.MAX_SCRIPT_SIZE or 
         len(script_pubkey.data) > CScript.MAX_SCRIPT_SIZE):
         return False
 
     stack = []
 
-    # Execute scriptSig (unlocking script)
+    # Execute scriptSig
     if not eval_script(script_sig.ops, stack, tx, input_index, script_pubkey):
         return False
 
-    # Execute scriptPubKey (locking script)
-    if not eval_script(script_pubkey.ops, stack, tx, input_index, script_pubkey):
-        return False
-
-    # Final stack validation
-    return bool(stack) and stack[-1] != b'\x00'
+    # Check if scriptPubKey is P2SH
+    if is_p2sh(script_pubkey):
+        if not stack:
+            return False
+        redeem_script_bytes = stack[-1]
+        redeem_script = CScript(redeem_script_bytes)
+        stack_before_p2sh = stack.copy()
+        
+        # Execute scriptPubKey (consumes redeem_script)
+        if not eval_script(script_pubkey.ops, stack, tx, input_index, script_pubkey):
+            return False
+        
+        # Check hash validation result
+        if not stack or stack[-1] == b'\x00':
+            return False
+        stack.pop()  # Remove OP_EQUAL result
+        
+        # Execute redeemScript with remaining stack elements
+        redeem_stack = stack_before_p2sh[:-1]  # Exclude redeem_script
+        if not eval_script(redeem_script.ops, redeem_stack, tx, input_index, redeem_script):
+            return False
+        
+        return bool(redeem_stack) and redeem_stack[-1] != b'\x00'
+    else:
+        # Standard script execution
+        if not eval_script(script_pubkey.ops, stack, tx, input_index, script_pubkey):
+            return False
+        return bool(stack) and stack[-1] != b'\x00'
 
 # --------------------------
 # Signature Verification
