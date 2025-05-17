@@ -1,7 +1,11 @@
 import io
 
 from crypto import hash256
+
 from serialize import compact_size
+from serialize import read_compact_size
+
+from script import CScript
 
 
 class COutPoint:
@@ -38,6 +42,14 @@ class COutPoint:
     def serialize(self) -> bytes:
         return self.hash + self.n.to_bytes(4, 'little')
 
+    @classmethod
+    def deserialize(cls, stream):
+        hash = stream.read(32)
+        if len(hash) != 32:
+            raise ValueError("COutPoint hash must be 32 bytes")
+        n = int.from_bytes(stream.read(4), 'little')
+        return cls(hash, n)
+
 
 class CTxIn:
     def __init__(self, prevout: COutPoint, scriptSig: 'CScript', nSequence: int = 0xffffffff):
@@ -56,6 +68,16 @@ class CTxIn:
             self.nSequence.to_bytes(4, 'little')
         )
 
+    @classmethod
+    def deserialize(cls, stream):
+        prevout = COutPoint.deserialize(stream)
+        script_size = read_compact_size(stream)
+        script_data = stream.read(script_size)
+        scriptSig = CScript(script_data)
+        nSequence = int.from_bytes(stream.read(4), 'little')
+        return cls(prevout, scriptSig, nSequence)
+
+
 class CTxOut:
     def __init__(self, nValue: int, scriptPubKey: 'CScript'):
         self.nValue = nValue  # Renamed field
@@ -70,6 +92,15 @@ class CTxOut:
             compact_size(len(self.scriptPubKey.data)) +
             self.scriptPubKey.data
         )
+
+    @classmethod
+    def deserialize(cls, stream):
+        nValue = int.from_bytes(stream.read(8), 'little')
+        script_size = read_compact_size(stream)
+        script_data = stream.read(script_size)
+        scriptPubKey = CScript(script_data)
+        return cls(nValue, scriptPubKey)
+
 
 class CTransaction:
     def __init__(self, nVersion: int = 1, vin: list[CTxIn] = None, 
@@ -111,6 +142,16 @@ class CTransaction:
         # Lock time
         stream.write(self.nLockTime.to_bytes(4, 'little'))
         return stream.getvalue()
+
+    @classmethod
+    def deserialize(cls, stream):
+        nVersion = int.from_bytes(stream.read(4), 'little')
+        txin_count = read_compact_size(stream)
+        vin = [CTxIn.deserialize(stream) for _ in range(txin_count)]
+        txout_count = read_compact_size(stream)
+        vout = [CTxOut.deserialize(stream) for _ in range(txout_count)]
+        nLockTime = int.from_bytes(stream.read(4), 'little')
+        return cls(nVersion, vin, vout, nLockTime)
 
     def get_hash(self):
         """Calculates the transaction hash"""

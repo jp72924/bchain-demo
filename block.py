@@ -5,6 +5,9 @@ from datetime import datetime
 from crypto import hash160
 from crypto import hash256
 
+from serialize import compact_size
+from serialize import read_compact_size
+
 from transaction import COutPoint
 from transaction import CTxIn
 from transaction import CTxOut
@@ -24,6 +27,32 @@ class CBlockHeader:
         self.nBits = nBits
         self.nNonce = nNonce
 
+    def serialize(self):
+        """Serializes the block header into a byte string"""
+        stream = io.BytesIO()
+        # Use original byte order without reversal
+        stream.write(self.nVersion.to_bytes(4, 'little'))
+        stream.write(self.hashPrevBlock)  # Already in correct byte order
+        stream.write(self.hashMerkleRoot)
+        stream.write(self.nTime.to_bytes(4, 'little'))
+        stream.write(self.nBits.to_bytes(4, 'little'))
+        stream.write(self.nNonce.to_bytes(4, 'little'))
+        return stream.getvalue()
+
+    @classmethod
+    def deserialize(cls, stream) -> 'CBlockHeader':
+        """Deserialize a block header from a byte stream."""
+        version = int.from_bytes(stream.read(4), 'little')
+        hash_prev_block = stream.read(32)
+        if len(hash_prev_block) != 32:
+            raise ValueError("Invalid hashPrevBlock length (must be 32 bytes)")
+        hash_merkle_root = stream.read(32)
+        if len(hash_merkle_root) != 32:
+            raise ValueError("Invalid hashMerkleRoot length (must be 32 bytes)")
+        n_time = int.from_bytes(stream.read(4), 'little')
+        n_bits = int.from_bytes(stream.read(4), 'little')
+        n_nonce = int.from_bytes(stream.read(4), 'little')
+        return cls(version, hash_prev_block, hash_merkle_root, n_time, n_bits, n_nonce)
 
 class CBlock(CBlockHeader):
     def __init__(self, header: CBlockHeader, vtx: list[CTransaction]):
@@ -49,21 +78,34 @@ class CBlock(CBlockHeader):
                     for h1, h2 in (hashes[i], hashes[i+1])]
         return hashes[0]
 
-    def serialize_header(self):
-        """Serializes the block header into a byte string"""
+    def serialize(self):
+        """Serializes the full block (header + transactions)"""
         stream = io.BytesIO()
-        # Use original byte order without reversal
-        stream.write(self.nVersion.to_bytes(4, 'little'))
-        stream.write(self.hashPrevBlock)  # Already in correct byte order
-        stream.write(self.hashMerkleRoot)
-        stream.write(self.nTime.to_bytes(4, 'little'))
-        stream.write(self.nBits.to_bytes(4, 'little'))
-        stream.write(self.nNonce.to_bytes(4, 'little'))
+        # Serialize header
+        stream.write(super().serialize())  # Use CBlockHeader's logic
+        # Serialize transactions
+        stream.write(compact_size(len(self.vtx)))
+        for tx in self.vtx:
+            stream.write(tx.serialize())
         return stream.getvalue()
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> 'CBlock':
+        """Deserialize a full block from bytes (header + transactions)"""
+        stream = io.BytesIO(data)
+        # Deserialize header
+        header = CBlockHeader.deserialize(stream)
+        # Deserialize transactions
+        tx_count = read_compact_size(stream)
+        vtx = [CTransaction.deserialize(stream) for _ in range(tx_count)]
+        # Validate no extra data remains
+        if stream.read():
+            raise ValueError("Extra data after transactions in block")
+        return cls(header, vtx)
 
     def get_hash(self):
         """Calculate the block's hash"""
-        header_data = self.serialize_header()
+        header_data = self.serialize()
         _hash = hash256(header_data)
         return _hash
 
@@ -132,7 +174,7 @@ def main():
     print("Merkle Root:", block.hashMerkleRoot.hex()[::-1])
     print(f"Block Timestamp: {datetime.fromtimestamp(block.nTime)} ({block.nTime} seconds since January 1st, 1970)")
     print("Nonce:", block.nNonce)
-    print("Block Header:", block.serialize_header().hex())
+    print("Block Header:", block.serialize().hex())
     print("Block Hash:", block.get_hash().hex()[::-1])
 
 if __name__ == '__main__':
