@@ -1,6 +1,7 @@
+from typing import List, Union
 from crypto import hash160
-from script import CScript, OP_0, OP_1, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_CHECKMULTISIG, OP_EQUAL
-
+from opcodes import *
+from script import CScript
 
 class ScriptBuilder:
     @staticmethod
