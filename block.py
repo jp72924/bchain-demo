@@ -11,11 +11,7 @@ from transaction import CTxOut
 from transaction import CTransaction
 
 from script import CScript
-from script import OP_DUP
-from script import OP_HASH160
-from script import OP_PUSHBYTES_20
-from script import OP_EQUALVERIFY
-from script import OP_CHECKSIG
+from script_utils import ScriptBuilder
 
 
 class CBlockHeader:
@@ -79,44 +75,36 @@ class CBlock(CBlockHeader):
         while int(self.get_hash().hex(), 16) > target:
             self.nNonce += 1
 
-def create_coinbase_transaction(coinbase_data, miner_reward, miner_pubkey):
+def create_coinbase_transaction(coinbase_data: CScript, miner_reward: int, script_pubkey: CScript):
     """
     Creates a new coinbase transaction paying the miner.
 
     Args:
-        coinbase_data (bytes, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
+        coinbase_data (CScript, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
         miner_reward (int): The amount of the miner reward in satoshis.
-        miner_pubkey_bytes (bytes): The script public key of the miner's address.
+        script_pubkey (CScript): The script public key of the miner's address.
 
     Returns:
         CTransaction: A new coinbase transaction instance.
     """
-    # Generate pubkey hash
-    pubkey_hash = hash160(miner_pubkey)
-
-    # Build P2PKH scriptPubKey
-    script_pubkey = CScript(
-        bytes([OP_DUP, OP_HASH160, OP_PUSHBYTES_20]) +  # 0x14 pushes 20 bytes
-        pubkey_hash +
-        bytes([OP_EQUALVERIFY, OP_CHECKSIG])
-    )
-
     # Create transaction
     tx = CTransaction(
-        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=coinbase_data)],
         vout=[CTxOut(nValue=miner_reward, scriptPubKey=script_pubkey)]
     )
     return tx
 
 
 def main():
-    pubkey = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
+    pubkey_bytes = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
     
+    p2pkh_script = ScriptBuilder.p2pkh_script_pubkey(pubkey_bytes)
+
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
-        coinbase_data=b'',
+        coinbase_data=CScript(b""),
         miner_reward=5000000000,
-        miner_pubkey=pubkey
+        script_pubkey=p2pkh_script
     )
 
     # Serialize and hash the transaction

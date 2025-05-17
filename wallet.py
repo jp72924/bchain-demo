@@ -9,14 +9,10 @@ from transaction import CTxOut
 from transaction import CTransaction
 
 from script import CScript
-from script import OP_DUP
-from script import OP_HASH160
-from script import OP_PUSHBYTES_20
-from script import OP_EQUALVERIFY
-from script import OP_CHECKSIG
-from script import OP_PUSHDATA1
 from script import SIGHASH_ALL
+from script import OP_PUSHDATA1
 from script import signature_hash
+from script_utils import ScriptBuilder
 
 try:
     import base58
@@ -88,13 +84,13 @@ class Wallet:
 
         vout = [
             CTxOut(amount, script_pubkey),
-            CTxOut(total_input - amount, build_p2pkh_script(pubkey_bytes))  # Change output to sender (P2PKH)
+            CTxOut(total_input - amount, ScriptBuilder.p2pkh_script_pubkey(pubkey_bytes))  # Change output to sender (P2PKH)
         ]
 
         # 3. Create transaction inputs
         vin = [
             CTxIn(
-                COutPoint(utxo.prevout.hash, utxo.prevout.n), b''
+                COutPoint(utxo.prevout.hash, utxo.prevout.n), CScript(b'')
             )
             for utxo in utxo_list
         ]
@@ -122,12 +118,11 @@ class Wallet:
         for i, tx_in in enumerate(new_transaction.vin):
             # Assuming a simple P2PKH input for signing
             pubkey_bytes = self.public_key.to_string("compressed")
-            script_pubkey = build_p2pkh_script(pubkey_bytes)
+            script_pubkey = ScriptBuilder.p2pkh_script_pubkey(pubkey_bytes)
             sighash = signature_hash(new_transaction, i, script_pubkey, SIGHASH_ALL)
             signature = self.sign(sighash)
-            push_sig = bytes([OP_PUSHDATA1, len(signature)]) + signature
-            push_pubkey = bytes([OP_PUSHDATA1, len(pubkey_bytes)]) + pubkey_bytes
-            new_transaction.vin[i].scriptSig = CScript(push_sig + push_pubkey)
+            script_sig = ScriptBuilder.p2pkh_script_sig(signature, pubkey_bytes)
+            new_transaction.vin[i].scriptSig = script_sig
 
         return new_transaction
 
@@ -164,7 +159,7 @@ class Wallet:
             script_sig = tx_in.scriptSig
             # Assume the output being spent is a P2PKH scriptPubKey for simplicity
             # In a real scenario, you would need to fetch the actual scriptPubKey
-            script_pubkey = build_p2pkh_script(self.public_key.to_string("compressed"))
+            script_pubkey = ScriptBuilder.p2pkh_script_pubkey(self.public_key.to_string("compressed"))
             # A P2PKH scriptSig should contain two elements: the signature and the public key
             if len(script_sig.ops) != 2:
                 return False  # ScriptSig does not have the expected number of elements
@@ -219,58 +214,21 @@ class Wallet:
         return address
 
 
-def build_p2pk_script(pubkey_bytes: bytes = None):
-        """
-        Creates a Pay-to-Public-Key (P2PK) scriptPubKey.
-
-        Args:
-            pubkey_bytes (bytes): The public key bytes to use.
-
-        Returns:
-            CScript: The P2PK scriptPubKey.
-        """
-        push_pubkey = bytes([OP_PUSHDATA1, len(pubkey_bytes)]) + pubkey_bytes
-        script_pubkey = CScript(push_pubkey + bytes([OP_CHECKSIG]))
-        return script_pubkey
-
-
-def build_p2pkh_script(pubkey_bytes: bytes = None):
-    """
-    Creates a Pay-to-Public-Key-Hash (P2PKH) scriptPubKey.
-
-    Args:
-        pubkey_bytes (bytes): The public key bytes to use.
-
-    Returns:
-        CScript: The P2PKH scriptPubKey.
-    """
-    # Generate pubkey hash
-    pubkey_hash = hash160(pubkey_bytes)
-
-    # Build P2PKH scriptPubKey
-    script_pubkey = CScript(
-        bytes([OP_DUP, OP_HASH160, OP_PUSHBYTES_20]) +  # 0x14 pushes 20 bytes
-        pubkey_hash +
-        bytes([OP_EQUALVERIFY, OP_CHECKSIG])
-    )
-    return script_pubkey
-
-
-def create_coinbase_transaction(coinbase_data, miner_reward, script_pubkey):
+def create_coinbase_transaction(coinbase_data: CScript, miner_reward: int, script_pubkey: CScript):
     """
     Creates a new coinbase transaction paying the miner.
 
     Args:
-        coinbase_data (bytes, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
+        coinbase_data (CScript, optional): Extra data included in the coinbase transaction. Defaults to an empty byte string.
         miner_reward (int): The amount of the miner reward in satoshis.
-        script_pubkey (bytes): The script public key of the miner's address.
+        script_pubkey (CScript): The script public key of the miner's address.
 
     Returns:
         CTransaction: A new coinbase transaction instance.
     """
     # Create transaction
     tx = CTransaction(
-        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=coinbase_data)],
         vout=[CTxOut(nValue=miner_reward, scriptPubKey=script_pubkey)]
     )
     return tx
@@ -295,17 +253,13 @@ def main():
     is_valid = wallet.verify(message, signature)
     print(f"Message signature is valid: {is_valid}")
 
-    # Example of creating P2PK scriptPubKey
-    p2pk_script = build_p2pk_script(recipient_pk_bytes)
-    print("P2PK ScriptPubKey:", p2pk_script)
-
-    # Example of creating P2PKH scriptPubKey for the recipient
-    p2pkh_script = build_p2pkh_script(recipient_pk_bytes)
+    # Example of creating P2PKH scriptPubKey
+    p2pkh_script = ScriptBuilder.p2pkh_script_pubkey(recipient_pk_bytes)
     print("P2PKH ScriptPubKey:", p2pkh_script)
 
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
-        coinbase_data=b'',
+        coinbase_data=CScript(b''),
         miner_reward=5_000_000_000,
         script_pubkey=p2pkh_script
     )
