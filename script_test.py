@@ -1,8 +1,8 @@
 from transaction import COutPoint, CTxIn, CTxOut, CTransaction
-from script import verify_script
+from interpreter import verify_script, signature_hash
 from crypto import sha256, ripemd160
-from script import signature_hash, CScript
-from script import SIGHASH_ALL, OP_DUP, OP_HASH160, OP_PUSHBYTES_20, OP_EQUAL, OP_0, OP_2, OP_3, OP_CHECKMULTISIG, OP_PUSHBYTES_33, OP_PUSHDATA1, OP_EQUALVERIFY, OP_CHECKSIG
+from script import CScript
+from opcodes import *
 import hashlib
 from ecdsa import SigningKey, SECP256k1
 from script_utils import ScriptBuilder
