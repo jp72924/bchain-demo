@@ -1,19 +1,26 @@
-from transaction import COutPoint, CTxIn, CTxOut, CTransaction
-from interpreter import verify_script, signature_hash
-from crypto import sha256, ripemd160
-from script import CScript
-from opcodes import *
 import hashlib
-from ecdsa import SigningKey, SECP256k1
-from script_utils import ScriptBuilder
 
+from ecdsa import SigningKey
+from ecdsa import SECP256k1
+
+from interpreter import verify_script
+from interpreter import signature_hash
+from crypto import sha256
+from crypto import ripemd160
+from opcodes import *
+from script import CScript
+from script_utils import ScriptBuilder
+from transaction import COutPoint
+from transaction import CTxIn
+from transaction import CTxOut
+from transaction import CTransaction
 
 # --------------------------
 # Example Usage
 # --------------------------
 
 if __name__ == "__main__":
-    print("# --- P2PK Test Case ---")
+    print("\n--- P2PK Test Case ---")
     # Generate key pair
     sk = SigningKey.generate(curve=SECP256k1)
     vk = sk.get_verifying_key()
@@ -27,7 +34,7 @@ if __name__ == "__main__":
     # Create transaction
     tx = CTransaction(
         vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],  # Coinbase input
-        vout=[CTxOut(nValue=50_000_000, scriptPubKey=script_pubkey)]
+        vout=[CTxOut(nValue=5_000_000_000, scriptPubKey=script_pubkey)]
     )
 
     # Sign transaction
@@ -42,9 +49,10 @@ if __name__ == "__main__":
     # Attach and verify
     tx.vin[0].scriptSig = script_sig
     print(f"ScriptPubKey: {script_pubkey}")
+    print(f"ScriptSig: {script_sig}")
     print("Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
 
-    print("# --- P2PKH Test Case ---")
+    print("\n--- P2PKH Test Case ---")
     # Generate pubkey hash
     pubkey_hash = ripemd160(sha256(pubkey))
 
@@ -59,7 +67,7 @@ if __name__ == "__main__":
     # Create transaction
     tx = CTransaction(
         vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
-        vout=[CTxOut(nValue=50_000_000, scriptPubKey=script_pubkey)]
+        vout=[CTxOut(nValue=5_000_000_000, scriptPubKey=script_pubkey)]
     )
 
     # Sign transaction
@@ -75,9 +83,10 @@ if __name__ == "__main__":
     # Attach and verify
     tx.vin[0].scriptSig = script_sig
     print(f"ScriptPubKey: {script_pubkey}")
+    print(f"ScriptSig: {script_sig}")
     print("Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
 
-    print("# --- P2MS Test Case ---")
+    print("\n --- P2MS Test Case ---")
     # Generate 3 key pairs
     sk1 = SigningKey.generate(curve=SECP256k1)
     vk1 = sk1.get_verifying_key()
@@ -105,7 +114,7 @@ if __name__ == "__main__":
     # Create transaction
     tx = CTransaction(
         vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
-        vout=[CTxOut(nValue=50_000_000, scriptPubKey=script_pubkey)]
+        vout=[CTxOut(nValue=5_000_000_000, scriptPubKey=script_pubkey)]
     )
 
     # Sign with 2 keys
@@ -124,9 +133,10 @@ if __name__ == "__main__":
     # Attach and verify
     tx.vin[0].scriptSig = script_sig
     print(f"ScriptPubKey: {script_pubkey}")
+    print(f"ScriptSig: {script_sig}")
     print("Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Output: True
 
-    print("# --- P2SH Test Case ---")
+    print("\n --- P2SH Test Case ---")
     # Generate 2-of-2 multisig redeem script
     sk1 = SigningKey.generate(curve=SECP256k1)
     vk1 = sk1.get_verifying_key()
@@ -155,7 +165,7 @@ if __name__ == "__main__":
     # Create transaction spending P2SH output
     tx = CTransaction(
         vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
-        vout=[CTxOut(50_000_000, script_pubkey)]
+        vout=[CTxOut(5_000_000_000, script_pubkey)]
     )
 
     # Sign with both keys
@@ -175,4 +185,5 @@ if __name__ == "__main__":
     # Attach and verify
     tx.vin[0].scriptSig = script_sig
     print(f"ScriptPubKey: {script_pubkey}")
+    print(f"ScriptSig: {script_sig}")
     print("Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Should output True

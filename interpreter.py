@@ -1,8 +1,13 @@
-from typing import List, Union
-from script import CScript
+from typing import List
+from typing import Union
+
+from crypto import hash256
+from crypto import ripemd160
+from crypto import sha256
 from opcodes import *
-from transaction import CTransaction, CTxIn
-from crypto import sha256, ripemd160, hash256
+from script import CScript
+from transaction import CTxIn
+from transaction import CTransaction
 
 # --------------------------
 # Helper functions

@@ -1,6 +1,7 @@
-from typing import List, Union
-from opcodes import *  # Import all OP constants
+from typing import List
+from typing import Union
 
+from opcodes import *  # Import all OP constants
 
 # --------------------------
 # Core Data Structures

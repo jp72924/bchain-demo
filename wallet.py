@@ -2,17 +2,15 @@ import copy
 
 from crypto import hash160
 from crypto import hash256
-
+from interpreter import signature_hash
+from opcodes import OP_PUSHDATA1
+from opcodes import SIGHASH_ALL
+from script import CScript
+from script_utils import ScriptBuilder
 from transaction import COutPoint
 from transaction import CTxIn
 from transaction import CTxOut
 from transaction import CTransaction
-
-from script import CScript
-from script import SIGHASH_ALL
-from script import OP_PUSHDATA1
-from script import signature_hash
-from script_utils import ScriptBuilder
 
 try:
     import base58

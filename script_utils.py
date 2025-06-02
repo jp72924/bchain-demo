@@ -1,4 +1,6 @@
-from typing import List, Union
+from typing import List
+from typing import Union
+
 from crypto import hash160
 from opcodes import *
 from script import CScript
@@ -29,7 +31,7 @@ class ScriptBuilder:
         return CScript(push_pubkey + bytes([OP_CHECKSIG]))
 
     @classmethod
-    def p2pkh_script_pubkey(cls, pubkey_or_hash: bytes, *, is_hash: bool = False) -> CScript:
+    def p2pkh_script_pubkey(cls, pubkey_or_hash: bytes, is_hash: bool = False) -> CScript:
         """Build Pay-to-Public-Key-Hash (P2PKH) script"""
         if is_hash:
             pubkey_hash = pubkey_or_hash
