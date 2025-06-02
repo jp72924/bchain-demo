@@ -1,40 +1,67 @@
 import copy
+from typing import Dict, Optional
 
+from block import CBlock
 from crypto import hash160
-
 from transaction import COutPoint
 from transaction import CTxIn
 from transaction import CTxOut
 from transaction import CTransaction
-
 from script import CScript
 from script_utils import ScriptBuilder
 
 
 class UTXO:
-    def __init__(self, prevout, tx_out):
+    def __init__(self, prevout, tx_out, block_height: int, is_coinbase: bool):
         self.prevout = prevout
         self.tx_out = tx_out
+        self.block_height = block_height  # Track confirmation depth
+        self.is_coinbase = is_coinbase
 
 
 class UTXOSet:
     def __init__(self):
-        self.utxos = {}
+        self.utxos: Dict[COutPoint, UTXO] = {}
 
-    def add(self, utxo):
+    def update_from_block(self, block: CBlock, height: int):
+        """Process all transactions in a block (spend inputs and add outputs)"""
+        # First: Process inputs (spend UTXOs)
+        for tx in block.vtx:
+            if not tx.is_coinbase():
+                for tx_in in tx.vin:
+                    self.spend(tx_in.prevout)
+
+        # Then: Add outputs as new UTXOs
+        for tx in block.vtx:
+            is_coinbase = tx.is_coinbase()
+            tx_hash = tx.get_hash()
+            for i, tx_out in enumerate(tx.vout):
+                prevout = COutPoint(tx_hash, i)
+                self.utxos[prevout] = UTXO(
+                    prevout=prevout,
+                    tx_out=tx_out,
+                    block_height=height,
+                    is_coinbase=is_coinbase
+                )
+
+    def add(self, utxo: UTXO):
         self.utxos[utxo.prevout] = utxo.tx_out
 
-    def spend(self, prevout):
-        if self.is_unspent(prevout):
-            del self.utxos[prevout]
-        else:
-            raise ValueError(f"UTXO ({prevout.hash.hex()}, {prevout.n}) not found or already spent.")
+    def spend(self, prevout: COutPoint):
+        if prevout not in self.utxos:
+            raise ValueError(f"UTXO not found: {prevout}")
+        del self.utxos[prevout]
 
-    def is_unspent(self, prevout):
+    def is_unspent(self, prevout: COutPoint):
         return prevout in self.utxos
 
-    def get_balance(self, scriptPubKey=None):
-        return sum(tx_out.nValue for tx_out in self.utxos.values() if tx_out.scriptPubKey == scriptPubKey or scriptPubKey == None)
+    def get_balance(self, script_pubkey: Optional[CScript] = None) -> int:
+        """Calculate balance filtered by scriptPubKey (if provided)"""
+        total = 0
+        for utxo in self.utxos.values():
+            if script_pubkey is None or utxo.scriptPubKey == script_pubkey:
+                total += utxo.nValue
+        return total
 
     def __repr__(self):
         return f"UTXOSet({list(self.utxos.values())})"
@@ -70,20 +97,21 @@ def main():
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
         coinbase_data=CScript(b""),
-        miner_reward=5000000000,
+        miner_reward=5_000_0000_000,
         script_pubkey=p2pkh_script
     )
 
     utxo_set = UTXOSet()
 
     tx = coinbase
+    BLOCK_HEIGHT = 1
     for tx_in in tx.vin:
         if not tx.is_coinbase():
             utxo_set.spend(tx_in.prevout)
 
     for index, tx_out in enumerate(tx.vout):
         outpoint = COutPoint(tx.get_hash(), index)
-        new_utxo = UTXO(outpoint, tx_out)
+        new_utxo = UTXO(outpoint, tx_out, BLOCK_HEIGHT, tx.is_coinbase())
         utxo_set.add(new_utxo)
 
     print(utxo_set.get_balance(p2pkh_script))
