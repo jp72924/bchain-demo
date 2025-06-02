@@ -19,6 +19,7 @@ def compact_size(value: int) -> bytes:
     """
     if value < 0:
         raise ValueError("Compact size cannot encode negative values")
+
     if value < 0xfd:
         return value.to_bytes(1, 'little')
     elif value <= 0xffff:
@@ -27,6 +28,7 @@ def compact_size(value: int) -> bytes:
         return b'\xfe' + value.to_bytes(4, 'little')
     else:
         return b'\xff' + value.to_bytes(8, 'little')
+
 
 def read_compact_size(stream):
     """Deserialize a Bitcoin-style compact size integer from a stream."""
