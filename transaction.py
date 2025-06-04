@@ -1,10 +1,8 @@
 import io
 
 from crypto import hash256
-
 from serialize import compact_size
 from serialize import read_compact_size
-
 from script import CScript
 
 
@@ -31,7 +29,7 @@ class COutPoint:
         """
         Checks if the COutPoint is a null outpoint.
 
-        A null outpoint is defined as having a hash of all zeros 
+        A null outpoint is defined as having a hash of all zeros
         and an index of 0xffffffff.
 
         Returns:
@@ -58,7 +56,7 @@ class CTxIn:
         self.nSequence = nSequence
 
     def __repr__(self):
-        return f"CTxIn(prevout={self.prevout}, scriptSig={self.scriptSig}, nSequence={self.nSequence})"  
+        return f"CTxIn(prevout={self.prevout}, scriptSig={self.scriptSig}, nSequence={self.nSequence})"
 
     def serialize(self) -> bytes:
         return (
@@ -103,7 +101,7 @@ class CTxOut:
 
 
 class CTransaction:
-    def __init__(self, nVersion: int = 1, vin: list[CTxIn] = None, 
+    def __init__(self, nVersion: int = 1, vin: list[CTxIn] = None,
                  vout: list[CTxOut] = None, nLockTime: int = 0):
         self.nVersion = nVersion  # Added version field
         self.vin = vin or []
@@ -120,36 +118,50 @@ class CTransaction:
         if len(self.vin) != 1:
             return False  # Coinbase transactions have only one input
 
-        coinbase_input = self.vin[0] 
+        coinbase_input = self.vin[0]
         return coinbase_input.prevout.is_null()
 
     def serialize(self):
         """Serializes the transaction into a byte string"""
         stream = io.BytesIO()
+
         # Version
         stream.write(self.nVersion.to_bytes(4, 'little'))
-        
+
         # Inputs
         stream.write(compact_size(len(self.vin)))
         for txin in self.vin:
             stream.write(txin.serialize())
-        
+
         # Outputs
         stream.write(compact_size(len(self.vout)))
         for txout in self.vout:
             stream.write(txout.serialize())
-        
+
         # Lock time
         stream.write(self.nLockTime.to_bytes(4, 'little'))
         return stream.getvalue()
 
     @classmethod
-    def deserialize(cls, stream):
+    def deserialize(cls, stream_or_bytes):
+        """Deserialize from either a stream or bytes"""
+        if isinstance(stream_or_bytes, bytes):
+            stream = io.BytesIO(stream_or_bytes)
+        else:
+            stream = stream_or_bytes
+
+        # Version
         nVersion = int.from_bytes(stream.read(4), 'little')
+
+        # Inputs
         txin_count = read_compact_size(stream)
         vin = [CTxIn.deserialize(stream) for _ in range(txin_count)]
+
+        # Outputs
         txout_count = read_compact_size(stream)
         vout = [CTxOut.deserialize(stream) for _ in range(txout_count)]
+
+        # Lock time
         nLockTime = int.from_bytes(stream.read(4), 'little')
         return cls(nVersion, vin, vout, nLockTime)
 
