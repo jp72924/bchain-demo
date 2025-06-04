@@ -1,27 +1,26 @@
+from datetime import datetime
+
+from block import CBlock
+from block import CBlockHeader
 from crypto import hash160
-
-from transaction import COutPoint
-from transaction import CTxIn
-from transaction import CTxOut
-from transaction import CTransaction
-
 from script import CScript
 from script_utils import ScriptBuilder
-
-from block import CBlockHeader
-from block import CBlock
+from transaction import COutPoint
+from transaction import CTransaction
+from transaction import CTxIn
+from transaction import CTxOut
 from utxo import UTXO
 from utxo import UTXOSet
 
-from datetime import datetime
-
 
 class Miner:
-    BLOCK_REWARD = 625000000  # 6.25 Bitcoins (625,000,000 sats)
-    DIFFICULTY_BITS = 20
+    BLOCK_HEIGHT = 0
+    BLOCK_REWARD = 5_000_000_000  # 50 Bitcoins (5,000,000,000 sats)
+    DIFFICULTY_BITS = 0x1f00ffff
 
     def __init__(self, miner_pubkey):
         self.blockchain = []
+        self.mempool = {}
         self.utxo_set = UTXOSet()
 
         self.miner_pubkey = miner_pubkey
@@ -62,7 +61,7 @@ class Miner:
             CBlock: A new block instance.
         """
         if time is None:
-            time = int(datetime.now().timestamp()) 
+            time = int(datetime.now().timestamp())
 
         # Create the coinbase transaction
         coinbase_tx = self.create_coinbase_transaction(
@@ -75,16 +74,15 @@ class Miner:
         transactions = [coinbase_tx] + transactions
 
         block_header = CBlockHeader(
-            nVersion=1, 
-            hashPrevBlock=prev_block, 
-            hashMerkleRoot=b'', 
-            nTime=time, 
-            nBits=bits, 
-            nNonce=0 
+            nVersion=1,
+            hashPrevBlock=prev_block,
+            hashMerkleRoot=b'',
+            nTime=time,
+            nBits=bits,
+            nNonce=0
         )
         block = CBlock(block_header, transactions)
-
-        block.hashMerkleRoot = block.build_merkle_root() 
+        block.hashMerkleRoot = block.build_merkle_root()
         return block
 
     def create_genesis_block(self, bits, coinbase_data, miner_reward, script_pubkey):
@@ -104,11 +102,11 @@ class Miner:
         prev_block = bytes(32)
 
         return self.create_candidate_block(
-            prev_block=prev_block, 
-            transactions=[], 
-            bits=bits, 
-            coinbase_data=coinbase_data, 
-            miner_reward=miner_reward, 
+            prev_block=prev_block,
+            transactions=[],
+            bits=bits,
+            coinbase_data=coinbase_data,
+            miner_reward=miner_reward,
             script_pubkey=script_pubkey,
             time=None
         )
@@ -116,21 +114,12 @@ class Miner:
     def update_local_state(self, block):
         """Adds the newly mined block to the blockchain."""
         self.blockchain.append(block)
-
-        for tx in block.vtx:
-            for tx_in in tx.vin:
-                if not tx.is_coinbase():
-                    self.utxo_set.spend(tx_in.prevout)
-
-            for index, tx_out in enumerate(tx.vout):
-                outpoint = COutPoint(tx.get_hash(), index)
-                new_utxo = UTXO(outpoint, tx_out)
-                self.utxo_set.add(new_utxo)
+        self.utxo_set.update_from_block(block, Miner.BLOCK_HEIGHT)
 
     def mine_new_block(self):
         candidate_block = self.create_candidate_block(
             prev_block=self.blockchain[-1].get_hash(),
-            transactions=[],
+            transactions=list(self.mempool.values()),
             bits=Miner.DIFFICULTY_BITS,
             coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little'),
             miner_reward=Miner.BLOCK_REWARD,
@@ -141,26 +130,28 @@ class Miner:
         # Calculates the hash of a block header and
         # performs Proof of Work to find a valid block hash.
         candidate_block.mine()
-        print("Block mined!", candidate_block.get_hash().hex())
+        Miner.BLOCK_HEIGHT += 1
 
         self.update_local_state(candidate_block)
-        print("Block added to the blockchain.")
 
     def run(self):
         """Continuously mines new blocks."""
         if not self.blockchain:
             genesis_block = self.create_genesis_block(
                 bits=Miner.DIFFICULTY_BITS,
-                coinbase_data=CScript(b""), 
-                miner_reward=Miner.BLOCK_REWARD, 
+                coinbase_data=CScript(b""),
+                miner_reward=Miner.BLOCK_REWARD,
                 script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey)
             )
             print("Genesis block created.")
             self.blockchain.append(genesis_block)
 
         while True:
-            print("Starting Proof of Work...")
             self.mine_new_block()
+            self.on_block_mine()
+
+    def on_block_mine(self):
+        ...
 
 
 def main():
@@ -168,7 +159,6 @@ def main():
     miner_pubkey = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
     miner = Miner(miner_pubkey)
     miner.run()
-    print(miner_pubkey)
 
 
 if __name__ == '__main__':
