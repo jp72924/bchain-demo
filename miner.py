@@ -85,40 +85,19 @@ class Miner:
         block.hashMerkleRoot = block.build_merkle_root()
         return block
 
-    def create_genesis_block(self, bits, coinbase_data, miner_reward, script_pubkey):
-        """
-        Creates the genesis block.
-
-        Args:
-            bits (int): The difficulty target for the Genesis Block.
-            coinbase_data (CSript, optional): Extra data for the Genesis Block's coinbase transaction. Defaults to an empty byte string.
-            miner_reward (int): The miner reward for the Genesis Block.
-            script_pubkey (CSript): The script public key of the miner for the Genesis Block.
-
-        Returns:
-            CBlock: The Genesis Block instance.
-        """
-        # Genesis Block has no previous block
-        prev_block = bytes(32)
-
-        return self.create_candidate_block(
-            prev_block=prev_block,
-            transactions=[],
-            bits=bits,
-            coinbase_data=coinbase_data,
-            miner_reward=miner_reward,
-            script_pubkey=script_pubkey,
-            time=None
-        )
-
     def update_local_state(self, block):
         """Adds the newly mined block to the blockchain."""
         self.blockchain.append(block)
         self.utxo_set.update_from_block(block, Miner.BLOCK_HEIGHT)
 
     def mine_new_block(self):
+        if self.blockchain:
+            prev_hash = self.blockchain[-1].get_hash()
+        else:
+            prev_hash = bytes(32)
+
         candidate_block = self.create_candidate_block(
-            prev_block=self.blockchain[-1].get_hash(),
+            prev_block=prev_hash,
             transactions=list(self.mempool.values()),
             bits=Miner.DIFFICULTY_BITS,
             coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little'),
@@ -136,16 +115,6 @@ class Miner:
 
     def run(self):
         """Continuously mines new blocks."""
-        if not self.blockchain:
-            genesis_block = self.create_genesis_block(
-                bits=Miner.DIFFICULTY_BITS,
-                coinbase_data=CScript(b""),
-                miner_reward=Miner.BLOCK_REWARD,
-                script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey)
-            )
-            print("Genesis block created.")
-            self.blockchain.append(genesis_block)
-
         while True:
             self.mine_new_block()
             self.on_block_mine()
