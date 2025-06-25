@@ -31,7 +31,7 @@ class BlockHandler:
                 blockchain = self.node.blockchain
                 block_height = len(blockchain)
                 utxo_set = self.node.utxo_set
-                prev_hash = block.hashPrevBlock
+                prev_hash = blockchain[-1].get_hash() if blockchain else bytes(32)
                 if validate_block(block, utxo_set, prev_hash, block_height):
                 # with self.node.sync_lock:
                     self.node.blockchain.append(block)
@@ -45,9 +45,8 @@ class BlockHandler:
                             del self.node.miner.mempool[txid]
                         
                     # Propagate block
-                    # if not message.get('relayed'):
-                    #     self.node.broadcast_block(block)
-                    return True
+
+                    self.node.relay_inventory(block)
             except Exception as e:
                 print(f"Block processing error: {e}")
             return False
@@ -73,12 +72,52 @@ class TxHandler:
                         self.node.miner.mempool[txid] = tx
 
                     # Propagate transaction
-                    # if not message.get('relayed'):
-                        # self.node.broadcast_transaction(tx)
                     return True
             except Exception as e:
-                print(f"TX processing error: {e}")
+                print(f"Transaction processing error: {e}")
             return False
+
+
+class InventoryHandler:
+    def __init__(self, node: 'BlockchainNode'):
+        self.node = node
+
+    def __call__(self, message: dict, sock: socket.socket) -> bool:
+        try:
+            inv_data = message['hash']
+            if not (inv_data in self.node.map_block_index):
+                response = {
+                    'type': 'GET_DATA',
+                    'hash': inv_data
+                }
+                # Send direct response through original socket
+                # self.node._send_direct_message(response, sock=sock)
+                self.node.send_message(response)
+        except Exception as e:
+            print(f"Inventory processing error: {e}")
+        return False
+
+
+class GetDataHandler:
+    def __init__(self, node: 'BlockchainNode'):
+        self.node = node
+
+    def __call__(self, message: dict, sock: socket.socket) -> bool:
+        try:
+            inv_data = message['hash']
+            if inv_data in self.node.map_block_index:
+                height = self.node.map_block_index.index(inv_data)
+                block = self.node.blockchain[height]
+                response = {
+                    'id': block.get_hash().hex(),
+                    'type': 'BLOCK',
+                    'block': block.serialize().hex(),
+                }
+                # Send direct response through original socket
+                self.node._send_direct_message(response, sock=sock)
+        except Exception as e:
+            print(f"Inventory processing error: {e}")
+        return False
 
 
 class BlockchainNode(PeerNode):
@@ -89,6 +128,7 @@ class BlockchainNode(PeerNode):
         self.blockchain: List[CBlock] = []
         self.utxo_set = UTXOSet()
         self.mempool: Dict[bytes, CTransaction] = {}
+        self.map_block_index = []
         # self.chain_work = 0
 
         # Mining setup
@@ -99,6 +139,8 @@ class BlockchainNode(PeerNode):
         # Register blockchain message handlers
         self.router.add_handler("BLOCK", BlockHandler(self))
         self.router.add_handler("TX", TxHandler(self))
+        self.router.add_handler("INV", InventoryHandler(self))
+        self.router.add_handler("GET_DATA", GetDataHandler(self))
 
     def broadcast_block(self, block: CBlock):
         self.send_message({
@@ -114,13 +156,24 @@ class BlockchainNode(PeerNode):
             'tx': tx.serialize().hex(),
         })
 
+    def relay_inventory(self, block: CBlock):
+        self.send_message({
+            'type': 'INV',
+            'hash': block.get_hash().hex()
+        })
+
     def run(self):
         self.miner_thread = threading.Thread(target=self.miner.run)
         self.miner_thread.start()
 
     def on_block_mine(self):
         head = self.miner.blockchain[-1]
-        self.broadcast_block(head)
+        head_hash = head.get_hash().hex()
+
+        self.seen_messages.add(head_hash)
+        self.blockchain.append(head)
+        self.map_block_index.append(head_hash)
+        self.relay_inventory(head)
 
 
 if __name__ == "__main__":
@@ -136,7 +189,6 @@ if __name__ == "__main__":
         pubkey=pubkey1,
         node_id="NODE-A"
     )
-    miner_node.run()
     
     regular_node = BlockchainNode(
         host='localhost',
@@ -145,7 +197,9 @@ if __name__ == "__main__":
         pubkey=pubkey2,
         node_id="NODE-B"
     )
-    regular_node.run()
+    # regular_node.run()
+    time.sleep(5)
+    miner_node.run()
 
     # Keep nodes running
     while True:
