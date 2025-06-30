@@ -45,8 +45,10 @@ class BlockHandler:
                             del self.node.miner.mempool[txid]
                         
                     # Propagate block
-
-                    self.node.relay_inventory(block)
+                    item_hash = block.get_hash().hex()
+                    item_type = 'MSG_BLOCK'
+                    inv_data = [(item_type, item_hash)]
+                    self.node.relay_inventory(inv_data)
             except Exception as e:
                 print(f"Block processing error: {e}")
             return False
@@ -71,8 +73,11 @@ class TxHandler:
                     if txid not in self.node.miner.mempool:
                         self.node.miner.mempool[txid] = tx
 
-                    # Propagate transaction
-                    return True
+                        # Propagate transaction
+                        item_hash = tx.get_hash().hex()
+                        item_type = 'MSG_TX'
+                        inv_data = [(item_type, item_hash)]
+                        self.node.relay_inventory(inv_data)
             except Exception as e:
                 print(f"Transaction processing error: {e}")
             return False
@@ -84,11 +89,22 @@ class InventoryHandler:
 
     def __call__(self, message: dict, sock: socket.socket) -> bool:
         try:
-            inv_data = message['hash']
-            if not (inv_data in self.node.map_block_index):
+            inv_data = message['inventory']
+            inv_req = []
+            for item_type, item_hash in inv_data:
+                if item_type == 'MSG_BLOCK':
+                    if not (item_hash in self.node.map_block_index):
+                        inv_item = (item_type, item_hash)
+                        inv_req.append(inv_req)
+                elif item_type == 'MSG_TX':
+                    if not (item_hash in self.node.miner.mempool):
+                        inv_item = (item_type, item_hash)
+                        inv_req.append(inv_req)
+
+            if inv_req:
                 response = {
                     'type': 'GET_DATA',
-                    'hash': inv_data
+                    'inventory': inv_data
                 }
                 # Send direct response through original socket
                 # self.node._send_direct_message(response, sock=sock)
@@ -104,17 +120,29 @@ class GetDataHandler:
 
     def __call__(self, message: dict, sock: socket.socket) -> bool:
         try:
-            inv_data = message['hash']
-            if inv_data in self.node.map_block_index:
-                height = self.node.map_block_index.index(inv_data)
-                block = self.node.blockchain[height]
-                response = {
-                    'id': block.get_hash().hex(),
-                    'type': 'BLOCK',
-                    'block': block.serialize().hex(),
-                }
-                # Send direct response through original socket
-                self.node._send_direct_message(response, sock=sock)
+            inv_data = message['inventory']
+            for item_type, item_hash in inv_data:
+                if item_type == 'MSG_BLOCK':
+                    if item_hash in self.node.map_block_index:
+                        height = self.node.map_block_index.index(item_hash)
+                        block = self.node.blockchain[height]
+                        response = {
+                            'id': block.get_hash().hex(),
+                            'type': 'BLOCK',
+                            'block': block.serialize().hex(),
+                        }
+                        # Send direct response through original socket
+                        self.node._send_direct_message(response, sock=sock)
+                elif item_type == 'MSG_TX':
+                    if item_hash in self.node.miner.mempool:
+                        tx = self.node.miner.mempool[item_hash]
+                        response = {
+                            'id': tx.get_hash().hex(),
+                            'type': 'TX',
+                            'tx': tx.serialize().hex(),
+                        }
+                        # Send direct response through original socket
+                        self.node._send_direct_message(response, sock=sock)
         except Exception as e:
             print(f"Inventory processing error: {e}")
         return False
@@ -156,10 +184,11 @@ class BlockchainNode(PeerNode):
             'tx': tx.serialize().hex(),
         })
 
-    def relay_inventory(self, block: CBlock):
+    def relay_inventory(self, items: list):
         self.send_message({
             'type': 'INV',
-            'hash': block.get_hash().hex()
+            'count': len(items),
+            'inventory': items
         })
 
     def run(self):
@@ -173,7 +202,11 @@ class BlockchainNode(PeerNode):
         self.seen_messages.add(head_hash)
         self.blockchain.append(head)
         self.map_block_index.append(head_hash)
-        self.relay_inventory(head)
+
+        item_hash = head.get_hash().hex()
+        item_type = 'MSG_BLOCK'
+        inv_data = [(item_type, item_hash)]
+        self.relay_inventory(inv_data)
 
 
 if __name__ == "__main__":
