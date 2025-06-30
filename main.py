@@ -25,6 +25,7 @@ class BlockHandler:
             try:
                 block_data = bytes.fromhex(message['block'])
                 block = CBlock.deserialize(block_data)
+                block_hash = block.get_hash().hex()
                 
                 print(f"[{self.node.node_id}] Received block: {block.get_hash()[::-1].hex()}")
 
@@ -34,21 +35,23 @@ class BlockHandler:
                 prev_hash = blockchain[-1].get_hash() if blockchain else bytes(32)
                 if validate_block(block, utxo_set, prev_hash, block_height):
                 # with self.node.sync_lock:
-                    self.node.blockchain.append(block)
-                    self.node.utxo_set.update_from_block(block, block_height)
-                    # self.node.chain_work += block.calculate_work()
+                    if block_hash not in self.node.map_block_index:
+                        self.node.blockchain.append(block)
+                        self.node.map_block_index.append(block_hash)
+                        self.node.utxo_set.update_from_block(block, block_height)
+                        # self.node.chain_work += block.calculate_work()
 
-                    # Clear mined transactions from mempool
-                    for tx in block.vtx[1:]:  # Skip coinbase
-                        txid = tx.get_hash()
-                        if txid in self.node.miner.mempool:
-                            del self.node.miner.mempool[txid]
-                        
-                    # Propagate block
-                    item_hash = block.get_hash().hex()
-                    item_type = 'MSG_BLOCK'
-                    inv_data = [(item_type, item_hash)]
-                    self.node.relay_inventory(inv_data)
+                        # Clear mined transactions from mempool
+                        for tx in block.vtx[1:]:  # Skip coinbase
+                            txid = tx.get_hash()
+                            if txid in self.node.miner.mempool:
+                                del self.node.miner.mempool[txid]
+
+                        # Propagate block
+                        item_hash = block.get_hash().hex()
+                        item_type = 'MSG_BLOCK'
+                        inv_data = [(item_type, item_hash)]
+                        self.node.relay_inventory(inv_data)
             except Exception as e:
                 print(f"Block processing error: {e}")
             return False
@@ -94,17 +97,15 @@ class InventoryHandler:
             for item_type, item_hash in inv_data:
                 if item_type == 'MSG_BLOCK':
                     if not (item_hash in self.node.map_block_index):
-                        inv_item = (item_type, item_hash)
-                        inv_req.append(inv_req)
+                        inv_req.append((item_type, item_hash))
                 elif item_type == 'MSG_TX':
                     if not (item_hash in self.node.miner.mempool):
-                        inv_item = (item_type, item_hash)
-                        inv_req.append(inv_req)
+                        inv_req.append((item_type, item_hash))
 
             if inv_req:
                 response = {
                     'type': 'GET_DATA',
-                    'inventory': inv_data
+                    'inventory': inv_req
                 }
                 # Send direct response through original socket
                 # self.node._send_direct_message(response, sock=sock)
@@ -155,7 +156,7 @@ class BlockchainNode(PeerNode):
         # Blockchain state
         self.blockchain: List[CBlock] = []
         self.utxo_set = UTXOSet()
-        self.mempool: Dict[bytes, CTransaction] = {}
+        # self.mempool: Dict[bytes, CTransaction] = {}
         self.map_block_index = []
         # self.chain_work = 0
 
@@ -202,6 +203,13 @@ class BlockchainNode(PeerNode):
         self.seen_messages.add(head_hash)
         self.blockchain.append(head)
         self.map_block_index.append(head_hash)
+
+        # UTXO update and mempool cleanup
+        self.utxo_set.update_from_block(head, len(self.blockchain))
+        for tx in head.vtx[1:]:
+            txid = tx.get_hash()
+            if txid in self.miner.mempool:
+                del self.miner.mempool[txid]
 
         item_hash = head.get_hash().hex()
         item_type = 'MSG_BLOCK'
