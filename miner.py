@@ -13,17 +13,50 @@ from utxo import UTXO
 from utxo import UTXOSet
 
 
+def to_compact(target: int) -> int:
+    """Convert 256-bit target integer to compact nBits representation"""
+    # Get minimal big-endian representation
+    data = target.to_bytes(32, 'big').lstrip(b'\x00')
+    if not data:
+        return 0
+        
+    n = len(data)
+    
+    # Take first 3 bytes for coefficient
+    if n > 3:
+        coefficient = int.from_bytes(data[:3], 'big')
+    else:
+        # Pad with zeros to 3 bytes
+        coefficient = int.from_bytes(data, 'big') << (8 * (3 - n))
+    
+    return (n << 24) | coefficient
+
+
+def from_compact(nBits: int) -> int:
+    """Convert compact nBits to 256-bit target integer"""
+    exponent = nBits >> 24
+    coefficient = nBits & 0x007fffff
+    
+    if exponent <= 3:
+        return coefficient >> (8 * (3 - exponent))
+    else:
+        return coefficient << (8 * (exponent - 3))
+
+
 class Miner:
-    BLOCK_HEIGHT = 0
-    BLOCK_REWARD = 5_000_000_000  # 50 Bitcoins (5,000,000,000 sats)
-    DIFFICULTY_BITS = 0x1f00ffff
+    BLOCK_REWARD = 5_000_000_000  # 50 BTC in satoshis
+    TARGET_TIMESPAN = 14 * 24 * 60 * 60  # 14 days in seconds
+    ADJUSTMENT_INTERVAL = 2016  # Blocks between adjustments
 
     def __init__(self, miner_pubkey):
         self.blockchain = []
         self.mempool = {}
         self.utxo_set = UTXOSet()
-
         self.miner_pubkey = miner_pubkey
+        
+        # Genesis block difficulty
+        self.genesis_bits = 0x1d00ffff
+        self.genesis_target = from_compact(self.genesis_bits)
 
     def create_coinbase_transaction(self, coinbase_data, miner_reward, script_pubkey):
         """
@@ -44,33 +77,50 @@ class Miner:
         )
         return tx
 
-    def create_candidate_block(self, prev_block, transactions, bits, coinbase_data, miner_reward, script_pubkey, time=None):
-        """
-        Creates a new candidate block with a coinbase transaction.
+    def get_next_bits(self) -> int:
+        """Calculate new nBits for next block"""
+        if not self.blockchain:
+            return self.genesis_bits
+            
+        height = len(self.blockchain)
+        
+        # Only adjust every 2016 blocks
+        if height % self.ADJUSTMENT_INTERVAL != 0:
+            return self.blockchain[-1].nBits
 
-        Args:
-            prev_block (bytes): The hash of the previous block.
-            transactions (list[CTransaction]): A list of transactions to include in the block.
-            bits (int): The difficulty target for block hash.
-            coinbase_data (CSript, optional): Extra data for the coinbase transaction. Defaults to an empty byte string.
-            miner_reward (int): The miner reward in satoshis.
-            script_pubkey (CSript): The script public key of the miner.
-            time (int, optional): The Unix epoch time for the block. Defaults to current time.
+        # Calculate timespan using first/last blocks in period
+        first_block = self.blockchain[height - self.ADJUSTMENT_INTERVAL]
+        last_block = self.blockchain[-1]
+        actual_timespan = last_block.nTime - first_block.nTime
 
-        Returns:
-            CBlock: A new block instance.
-        """
+        # Clamp timespan to 0.25x-4x of target
+        min_timespan = self.TARGET_TIMESPAN // 4
+        max_timespan = self.TARGET_TIMESPAN * 4
+        actual_timespan = min(max(actual_timespan, min_timespan), max_timespan)
+
+        # Calculate new target
+        old_target = from_compact(last_block.nBits)
+        new_target = old_target * actual_timespan // self.TARGET_TIMESPAN
+        
+        # Apply genesis target as upper limit
+        new_target = min(new_target, self.genesis_target)
+        
+        return to_compact(new_target)
+
+    def create_candidate_block(self, prev_block, transactions, coinbase_data, miner_reward, script_pubkey, time=None):
         if time is None:
             time = int(datetime.now().timestamp())
 
-        # Create the coinbase transaction
+        # Calculate dynamic difficulty
+        bits = self.get_next_bits()
+
+        # Create coinbase transaction
         coinbase_tx = self.create_coinbase_transaction(
             coinbase_data=coinbase_data,
             miner_reward=miner_reward,
             script_pubkey=script_pubkey
         )
 
-        # Add coinbase transaction to the list of transactions
         transactions = [coinbase_tx] + transactions
 
         block_header = CBlockHeader(
@@ -88,7 +138,7 @@ class Miner:
     def update_local_state(self, block):
         """Adds the newly mined block to the blockchain."""
         self.blockchain.append(block)
-        self.utxo_set.update_from_block(block, Miner.BLOCK_HEIGHT)
+        self.utxo_set.update_from_block(block, len(self.blockchain))
 
     def mine_new_block(self):
         if self.blockchain:
@@ -99,7 +149,6 @@ class Miner:
         candidate_block = self.create_candidate_block(
             prev_block=prev_hash,
             transactions=list(self.mempool.values()),
-            bits=Miner.DIFFICULTY_BITS,
             coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little'),
             miner_reward=Miner.BLOCK_REWARD,
             script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey),
@@ -109,7 +158,6 @@ class Miner:
         # Calculates the hash of a block header and
         # performs Proof of Work to find a valid block hash.
         candidate_block.mine()
-        Miner.BLOCK_HEIGHT += 1
 
         self.update_local_state(candidate_block)
 
