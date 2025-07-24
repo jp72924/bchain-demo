@@ -22,6 +22,7 @@ class UTXO:
 class UTXOSet:
     def __init__(self):
         self.utxos: Dict[COutPoint, UTXO] = {}
+        self.spent_utxos: Dict[COutPoint, UTXO] = {}  # Added spent UTXO cache
 
     def update_from_block(self, block: CBlock, height: int):
         """Process all transactions in a block (spend inputs and add outputs)"""
@@ -44,12 +45,28 @@ class UTXOSet:
                     is_coinbase=is_coinbase
                 )
 
+    def disconnect_block(self, block: CBlock):
+        """Undo block effects on UTXO set"""
+        # 1. Remove created outputs
+        for tx in block.vtx:
+            tx_hash = tx.get_hash()
+            for i in range(len(tx.vout)):
+                prevout = COutPoint(tx_hash, i)
+                del self.utxos[prevout]
+  
+        # 2. Restore spent inputs
+        for tx in block.vtx[1:]:  # Skip coinbase
+            for txin in tx.vin:
+                self.utxos[txin.prevout] = self.spent_utxos[txin.prevout]
+
     def add(self, utxo: UTXO):
         self.utxos[utxo.prevout] = utxo.tx_out
 
     def spend(self, prevout: COutPoint):
         if prevout not in self.utxos:
             raise ValueError(f"UTXO not found: {prevout}")
+        # Cache spent UTXO for potential restoration
+        self.spent_utxos[prevout] = self.utxos[prevout]
         del self.utxos[prevout]
 
     def is_unspent(self, prevout: COutPoint):
