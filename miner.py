@@ -2,6 +2,8 @@ from datetime import datetime
 
 from block import CBlock
 from block import CBlockHeader
+from block_index import CBlockIndex
+from block_index import Chain
 from crypto import hash160
 from script import CScript
 from script_utils import ScriptBuilder
@@ -49,7 +51,8 @@ class Miner:
     ADJUSTMENT_INTERVAL = 2016  # Blocks between adjustments
 
     def __init__(self, miner_pubkey):
-        self.blockchain = []
+        # self.blockchain = []
+        self.chain = Chain()  # New chain index system
         self.mempool = {}
         self.utxo_set = UTXOSet()
         self.miner_pubkey = miner_pubkey
@@ -57,6 +60,41 @@ class Miner:
         # Genesis block difficulty
         self.genesis_bits = 0x1d00ffff
         self.genesis_target = from_compact(self.genesis_bits)
+
+    def get_next_bits(self) -> int:
+        """Calculate new nBits for next block"""
+        if not self.chain.tip:
+            return self.genesis_bits
+            
+        height = self.chain.tip.height
+        
+        # Only adjust every 2016 blocks
+        if height % self.ADJUSTMENT_INTERVAL != 0:
+            return self.chain.tip.header.nBits
+
+        # Get reference blocks using chain structure
+        first_block = self.chain.tip
+        for _ in range(self.ADJUSTMENT_INTERVAL):
+            first_block = first_block.pprev
+            if not first_block:
+                return self.genesis_bits
+
+        last_block = self.chain.tip
+        actual_timespan = last_block.header.nTime - first_block.header.nTime
+
+        # Clamp timespan to 0.25x-4x of target
+        min_timespan = self.TARGET_TIMESPAN // 4
+        max_timespan = self.TARGET_TIMESPAN * 4
+        actual_timespan = min(max(actual_timespan, min_timespan), max_timespan)
+
+        # Calculate new target
+        old_target = from_compact(last_block.header.nBits)
+        new_target = old_target * actual_timespan // self.TARGET_TIMESPAN
+        
+        # Apply genesis target as upper limit
+        new_target = min(new_target, self.genesis_target)
+        
+        return to_compact(new_target)
 
     def create_coinbase_transaction(self, coinbase_data, miner_reward, script_pubkey):
         """
@@ -77,37 +115,7 @@ class Miner:
         )
         return tx
 
-    def get_next_bits(self) -> int:
-        """Calculate new nBits for next block"""
-        if not self.blockchain:
-            return self.genesis_bits
-            
-        height = len(self.blockchain)
-        
-        # Only adjust every 2016 blocks
-        if height % self.ADJUSTMENT_INTERVAL != 0:
-            return self.blockchain[-1].nBits
-
-        # Calculate timespan using first/last blocks in period
-        first_block = self.blockchain[height - self.ADJUSTMENT_INTERVAL]
-        last_block = self.blockchain[-1]
-        actual_timespan = last_block.nTime - first_block.nTime
-
-        # Clamp timespan to 0.25x-4x of target
-        min_timespan = self.TARGET_TIMESPAN // 4
-        max_timespan = self.TARGET_TIMESPAN * 4
-        actual_timespan = min(max(actual_timespan, min_timespan), max_timespan)
-
-        # Calculate new target
-        old_target = from_compact(last_block.nBits)
-        new_target = old_target * actual_timespan // self.TARGET_TIMESPAN
-        
-        # Apply genesis target as upper limit
-        new_target = min(new_target, self.genesis_target)
-        
-        return to_compact(new_target)
-
-    def create_candidate_block(self, prev_block, transactions, coinbase_data, miner_reward, script_pubkey, time=None):
+    def create_candidate_block(self, prev_hash, transactions, coinbase_data, miner_reward, script_pubkey, time=None):
         if time is None:
             time = int(datetime.now().timestamp())
 
@@ -125,7 +133,7 @@ class Miner:
 
         block_header = CBlockHeader(
             nVersion=1,
-            hashPrevBlock=prev_block,
+            hashPrevBlock=prev_hash,
             hashMerkleRoot=b'',
             nTime=time,
             nBits=bits,
@@ -136,29 +144,67 @@ class Miner:
         return block
 
     def update_local_state(self, block):
-        """Adds the newly mined block to the blockchain."""
-        self.blockchain.append(block)
-        self.utxo_set.update_from_block(block, len(self.blockchain))
+        """Adds the newly mined block to the blockchain index"""
+        try:
+            new_index = self.chain.add_block(block)
+            
+            # Update UTXO set based on new chain state
+            if self.chain.tip == new_index:
+                # Simple extension case
+                self.utxo_set.update_from_block(block, new_index.height)
+            else:
+                # Handle chain reorganization
+                self.handle_chain_reorg(new_index)
+                
+            # Clear mined transactions from mempool
+            for tx in block.vtx[1:]:  # Skip coinbase
+                txid = tx.get_hash()
+                if txid in self.mempool:
+                    del self.mempool[txid]
+                    
+        except ValueError as e:
+            print(f"Block addition failed: {e}")
+
+    def handle_chain_reorg(self, new_tip):
+        """Update UTXO set during chain reorganization"""
+        # 1. Find fork point
+        fork_block = self.chain._find_fork_point(self.chain.tip, new_tip)
+        
+        # 2. Disconnect blocks from old chain
+        current = self.chain.tip
+        while current != fork_block:
+            self.utxo_set.disconnect_block(current.header)
+            current = current.pprev
+        
+        # 3. Connect blocks from new chain
+        blocks_to_connect = []
+        current = new_tip
+        while current != fork_block:
+            blocks_to_connect.append(current.header)
+            current = current.pprev
+        blocks_to_connect.reverse()  # Apply in order
+        
+        for block in blocks_to_connect:
+            self.utxo_set.update_from_block(block, block.height)
 
     def mine_new_block(self):
-        if self.blockchain:
-            prev_hash = self.blockchain[-1].get_hash()
+        # Get previous block hash from chain tip
+        if self.chain.tip:
+            prev_hash = self.chain.tip.hash
         else:
-            prev_hash = bytes(32)
+            prev_hash = bytes(32)  # Genesis block
 
         candidate_block = self.create_candidate_block(
-            prev_block=prev_hash,
+            prev_hash=prev_hash,
             transactions=list(self.mempool.values()),
-            coinbase_data=b'' + len(self.blockchain).to_bytes(4, 'little'),
+            coinbase_data=b'' + (self.chain.tip.height + 1 if self.chain.tip else 0).to_bytes(4, 'little'),
             miner_reward=Miner.BLOCK_REWARD,
             script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey),
             time=None
         )
 
-        # Calculates the hash of a block header and
-        # performs Proof of Work to find a valid block hash.
+        # Mine and add to chain
         candidate_block.mine()
-
         self.update_local_state(candidate_block)
 
     def run(self):
