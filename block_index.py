@@ -1,89 +1,100 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+from block import CBlock, CBlockHeader
 
 
 class CBlockIndex:
     """
-    Represents a single block in the blockchain.
-    It contains data and pointers for navigating the tree and the main chain.
+    Represents a single block in the blockchain with Bitcoin-specific features.
     """
-    __slots__ = ('hash', 'height', 'pprev', 'pnext', 'children')
+    __slots__ = ('header', 'hash', 'height', 'pprev', 'pnext', 'children', 'chain_work')
     
-    def __init__(self, hash: str, parent: Optional['CBlockIndex'] = None):
+    def __init__(self, block: CBlock, parent: Optional['CBlockIndex'] = None):
         """
-        Initialize a new block.
+        Initialize a new block index from a CBlock object.
         
         Args:
-            hash: Cryptographic hash of this block
-            parent (optional): Parent CBlockIndex reference (None for genesis)
+            block: The block object to index
+            parent: Parent CBlockIndex reference (None for genesis)
         """
-        self.hash = hash     # A unique identifier for the block
-        self.children = []   # A list of all potential next blocks
-        self.pprev = parent  # Pointer to the previous block in the chain
-        self.pnext = None    # Pointer to the next block in the longest chain
-        self.height = 0      # The height of the block from the genesis block
+        self.header = block  # Reference to full block header
+        self.hash = block.get_hash()  # Block hash as bytes
+        self.children = []   # List of potential next blocks
+        self.pprev = parent  # Pointer to previous block
+        self.pnext = None    # Pointer to next block in longest chain
+        self.height = 0      # Height from genesis
+        self.chain_work = 0  # Cumulative chain work
         
         if parent:
             self.height = parent.height + 1
             parent.children.append(self)
+            # Calculate chain work: parent + current block's work
+            self.chain_work = parent.chain_work + self.calculate_work()
+
+    def calculate_work(self) -> int:
+        """Calculate the work represented by this block (Bitcoin style)"""
+        # Target is derived from nBits
+        exponent = self.header.nBits >> 24
+        coefficient = self.header.nBits & 0x007fffff
+        
+        # Calculate target value
+        if exponent <= 3:
+            target = coefficient >> (8 * (3 - exponent))
+        else:
+            target = coefficient << (8 * (exponent - 3))
+        
+        # Cap to 256 bits and calculate work (2^256 / (target + 1))
+        max_target = (1 << 256) - 1
+        target = min(target, max_target)
+        return (2 << 256) // (target + 1)
 
     def __repr__(self):
-        """Provides a string representation of the block for easy debugging."""
-        return f"CBlockIndex(hash={self.hash[:8]}..., height={self.height})"
-
+        """Provides a string representation for debugging"""
+        return f"CBlockIndex(height={self.height}, hash={self.hash.hex()[:8]}...)"
 
 class Chain:
     """
-    Maintains a tree-shaped blockchain with efficient longest-chain tracking.
-    Implements Bitcoin-style chain reorganization logic.
-    
-    Attributes:
-        genesis (CBlockIndex): First block in the chain
-        tip (CBlockIndex): Current endpoint of the longest valid chain
-        block_map (Dict[str, CBlockIndex]): Hash-to-block lookup dictionary
+    Maintains a tree-shaped blockchain with Bitcoin-style validation.
     """
     def __init__(self):
-        """Initialize an empty blockchain."""
+        """Initialize an empty blockchain"""
         self.genesis = None
         self.tip = None
-        self.block_map = {}
-    
-    def add_block(self, block_hash: str, parent_hash: Optional[str] = None) -> CBlockIndex:
-        """
-        Add a new block to the blockchain as a child of the specified parent.
-        
-        Args:
-            block_hash: Cryptographic hash of the new block
-            parent_hash: Hash of the parent block (None for genesis)
-            
-        Returns:
-            The created CBlockIndex object
-            
-        Raises:
-            ValueError: For invalid genesis block or missing parent
-        """
-        # Genesis block creation
-        if not self.genesis:
-            if parent_hash is not None:
-                raise ValueError("Genesis block must have no parent")
-            self.genesis = CBlockIndex(block_hash)
-            self.tip = self.genesis
-            self.block_map[block_hash] = self.genesis
-            return self.genesis
-        
-        # Validate parent exists
-        if parent_hash not in self.block_map:
-            raise ValueError(f"Parent block {parent_hash} not found")
-        
-        parent = self.block_map[parent_hash]
-        new_block = CBlockIndex(block_hash, parent)
-        self.block_map[block_hash] = new_block
+        self.block_map = {}  # Hash (bytes) to block index mapping
 
-        # Update longest chain if new block extends it
-        if new_block.height > self.tip.height:
-            self._update_main_chain(new_block)
+    def add_block(self, block: CBlock) -> Tuple[bool, CBlockIndex]:
+        """
+        Add a new block to the blockchain with validation.
+        
+        Returns:
+            new_index: CBlockIndex
+        """
+        # Find parent block
+        parent_hash = block.hashPrevBlock
+        parent = self.block_map.get(parent_hash, None)
+        
+        # Genesis block creation
+        if parent is None:
+            if block.hashPrevBlock != bytes(32):
+                raise ValueError("Invalid genesis parent hash")
+            if self.genesis is not None:
+                raise ValueError("Genesis block already exists")
             
-        return new_block
-    
+            # Create genesis index
+            self.genesis = CBlockIndex(block)
+            self.tip = self.genesis
+            self.block_map[self.genesis.hash] = self.genesis
+            return self.genesis
+
+        # Create new block index
+        new_index = CBlockIndex(block, parent)
+        self.block_map[new_index.hash] = new_index
+
+        # Update longest chain if new chain has more work
+        if new_index.chain_work > self.tip.chain_work:
+            self._update_main_chain(new_index)
+            
+        return new_index
+
     def _update_main_chain(self, new_tip: CBlockIndex):
         """
         Update chain pointers after discovering a new longest chain.
@@ -102,7 +113,7 @@ class Chain:
         
         # Build new chain path
         self._rebuild_chain_path(fork_block, new_tip)
-    
+
     def _find_fork_point(self, block_a: CBlockIndex, block_b: CBlockIndex) -> CBlockIndex:
         """
         Find the last common ancestor of two chain tips.
@@ -123,7 +134,7 @@ class Chain:
             a = a.pprev
             b = b.pprev
         return a
-    
+
     def _invalidate_chain_segment(self, from_block: CBlockIndex, to_block: CBlockIndex):
         """
         Clear pnext pointers along a chain segment (exclusive of to_block).
@@ -136,7 +147,7 @@ class Chain:
         while current != to_block:
             current.pnext = None
             current = current.pprev
-    
+
     def _rebuild_chain_path(self, fork_block: CBlockIndex, new_tip: CBlockIndex):
         """
         Reconstruct pnext pointers from fork point to new tip.
@@ -158,7 +169,7 @@ class Chain:
         for i in range(len(path) - 1):
             path[i].pnext = path[i+1]
         path[-1].pnext = None  # Tip has no next
-    
+
     def get_longest_chain(self) -> list[CBlockIndex]:
         """Return all blocks in the current longest chain from genesis to tip."""
         chain = []
@@ -197,25 +208,3 @@ class Chain:
         
         if block == self.genesis:
              print("================\n")
-
-# Example Usage
-if __name__ == "__main__":
-    chain = Chain()
-    
-    # Build blockchain (genesis -> A -> B -> C)
-    chain.add_block("0")          # Genesis
-    chain.add_block("A", "0")
-    chain.add_block("B", "A")
-    chain.add_block("C", "B")     # Main chain: 0-A-B-C
-    
-    # Create fork: 0 -> D -> E
-    chain.add_block("D", "0")
-    chain.add_block("E", "D")
-    
-    # Extend fork to become longest chain: 0 -> D -> E -> F -> G
-    chain.add_block("F", "E")
-    chain.add_block("G", "F")     # New main chain: 0-D-E-F-G
-    
-    # Print results
-    chain.print_tree()
-    chain.print_main_chain()
