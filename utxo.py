@@ -12,19 +12,20 @@ from script_utils import ScriptBuilder
 
 
 class UTXO:
-    def __init__(self, prevout, tx_out, block_height: int, is_coinbase: bool):
+    def __init__(self, prevout: 'COutPoint', tx_out: 'CTxOut', height: int, coinbase: bool):
+        self.height = height        # The height of the block containing the UTXO
+        self.coinbase = coinbase    # Whether the UTXO comes from a coinbase transaction or not.
+        self.tx_out = tx_out        # The value of the output in satoshis
+                                    # and locking code that was placed on the output.
         self.prevout = prevout
-        self.tx_out = tx_out
-        self.block_height = block_height  # Track confirmation depth
-        self.is_coinbase = is_coinbase
 
 
 class UTXOSet:
     def __init__(self):
-        self.utxos: Dict[COutPoint, UTXO] = {}
-        self.spent_utxos: Dict[COutPoint, UTXO] = {}  # Added spent UTXO cache
+        self.utxos: Dict['COutPoint', 'UTXO'] = {}
+        self.spent_utxos: Dict['COutPoint', 'UTXO'] = {}  # Added spent UTXO cache
 
-    def update_from_block(self, block: CBlock, height: int):
+    def update_from_block(self, block: 'CBlock', height: int):
         """Process all transactions in a block (spend inputs and add outputs)"""
         # First: Process inputs (spend UTXOs)
         for tx in block.vtx:
@@ -41,11 +42,11 @@ class UTXOSet:
                 self.utxos[prevout] = UTXO(
                     prevout=prevout,
                     tx_out=tx_out,
-                    block_height=height,
-                    is_coinbase=is_coinbase
+                    height=height,
+                    coinbase=is_coinbase
                 )
 
-    def disconnect_block(self, block: CBlock):
+    def disconnect_block(self, block: 'CBlock'):
         """Undo block effects on UTXO set"""
         # 1. Remove created outputs
         for tx in block.vtx:
@@ -61,32 +62,32 @@ class UTXOSet:
 
     def add(self, utxo: 'UTXO'):
         if not isinstance(utxo, UTXO):
-            raise TypeError("Can only add UTXO objects")
+            raise TypeError("Cannot add non-UTXO objects")
         self.utxos[utxo.prevout] = utxo
 
-    def spend(self, prevout: COutPoint):
+    def spend(self, prevout: 'COutPoint'):
         if prevout not in self.utxos:
             raise ValueError(f"UTXO not found: {prevout}")
         # Cache spent UTXO for potential restoration
         self.spent_utxos[prevout] = self.utxos[prevout]
         del self.utxos[prevout]
 
-    def is_unspent(self, prevout: COutPoint):
+    def is_unspent(self, prevout: 'COutPoint'):
         return prevout in self.utxos
 
-    def get_balance(self, script_pubkey: Optional[CScript] = None) -> int:
+    def get_balance(self, script_pubkey: Optional['CScript'] = None) -> int:
         """Calculate balance filtered by scriptPubKey (if provided)"""
         total = 0
         for utxo in self.utxos.values():
-            if script_pubkey is None or utxo.scriptPubKey == script_pubkey:
-                total += utxo.nValue
+            if script_pubkey is None or utxo.tx_out.scriptPubKey == script_pubkey:
+                total += utxo.tx_out.nValue
         return total
 
     def __repr__(self):
         return f"UTXOSet({list(self.utxos.values())})"
 
 
-def create_coinbase_transaction(coinbase_data: CScript, miner_reward: int, script_pubkey: CScript):
+def create_coinbase_transaction(coinbase_data: 'CScript', miner_reward: int, script_pubkey: 'CScript'):
     """
     Creates a new coinbase transaction paying the miner.
 
@@ -116,24 +117,25 @@ def main():
     # Create a coinbase transaction
     coinbase = create_coinbase_transaction(
         coinbase_data=CScript(b""),
-        miner_reward=5_000_0000_000,
+        miner_reward=5_000_000_000,
         script_pubkey=p2pkh_script
     )
 
     utxo_set = UTXOSet()
+    height = 1
 
     tx = coinbase
-    BLOCK_HEIGHT = 1
-    for tx_in in tx.vin:
-        if not tx.is_coinbase():
+    if not tx.is_coinbase():
+        for tx_in in tx.vin:
             utxo_set.spend(tx_in.prevout)
 
     for index, tx_out in enumerate(tx.vout):
         outpoint = COutPoint(tx.get_hash(), index)
-        new_utxo = UTXO(outpoint, tx_out, BLOCK_HEIGHT, tx.is_coinbase())
+        new_utxo = UTXO(outpoint, tx_out, height, tx.is_coinbase())
         utxo_set.add(new_utxo)
 
-    print(utxo_set.get_balance(p2pkh_script))
+    wallet_balance = utxo_set.get_balance(p2pkh_script)
+    print(f"Wallet Balance: {wallet_balance / (10 ** 8)} BTC")
 
 
 if __name__ == '__main__':
