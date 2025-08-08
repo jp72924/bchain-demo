@@ -59,8 +59,10 @@ class UTXOSet:
             for txin in tx.vin:
                 self.utxos[txin.prevout] = self.spent_utxos[txin.prevout]
 
-    def add(self, utxo: UTXO):
-        self.utxos[utxo.prevout] = utxo.tx_out
+    def add(self, utxo: 'UTXO'):
+        if not isinstance(utxo, UTXO):
+            raise TypeError("Can only add UTXO objects")
+        self.utxos[utxo.prevout] = utxo
 
     def spend(self, prevout: COutPoint):
         if prevout not in self.utxos:
