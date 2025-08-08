@@ -12,7 +12,7 @@ class CScript:
     MAX_STACK_SIZE = 1000
     MAX_OPS_PER_SCRIPT = 201
 
-    def __init__(self, data: bytes = b""):
+    def __init__(self, data: bytes = b''):
         if len(data) > self.MAX_SCRIPT_SIZE:
             raise ValueError("Script exceeds maximum size")
         self.data = data
@@ -66,3 +66,12 @@ class CScript:
 
     def __repr__(self) -> str:
         return f"CScript({self.data.hex()})"
+
+    def __hash__(self):
+        return hash(self.data)
+
+    def __eq__(self, other):
+        if not isinstance(other, CScript):
+            # Don't attempt to compare against unrelated types
+            return NotImplemented
+        return self.data == other.data
