@@ -1,10 +1,9 @@
 from datetime import datetime
+from typing import Dict
 
 from block import CBlock
 from block import CBlockHeader
-from block_index import CBlockIndex
 from block_index import Chain
-from crypto import hash160
 from script import CScript
 from script_utils import ScriptBuilder
 from transaction import COutPoint
@@ -51,14 +50,13 @@ class Miner:
     ADJUSTMENT_INTERVAL = 2016  # Blocks between adjustments
 
     def __init__(self, miner_pubkey):
-        # self.blockchain = []
         self.chain = Chain()  # New chain index system
-        self.mempool = {}
         self.utxo_set = UTXOSet()
+        self.mempool: Dict[bytes, CTransaction] = {}
         self.miner_pubkey = miner_pubkey
         
         # Genesis block difficulty
-        self.genesis_bits = 0x1d00ffff
+        self.genesis_bits = 0x1f00ffff
         self.genesis_target = from_compact(self.genesis_bits)
 
     def get_next_bits(self) -> int:
@@ -110,7 +108,7 @@ class Miner:
         """
         # Create transaction
         tx = CTransaction(
-            vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=script_pubkey)],
+            vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=coinbase_data)],
             vout=[CTxOut(nValue=miner_reward, scriptPubKey=script_pubkey)]
         )
         return tx
@@ -180,12 +178,12 @@ class Miner:
         blocks_to_connect = []
         current = new_tip
         while current != fork_block:
-            blocks_to_connect.append(current.header)
+            blocks_to_connect.append(current)
             current = current.pprev
         blocks_to_connect.reverse()  # Apply in order
         
         for block in blocks_to_connect:
-            self.utxo_set.update_from_block(block, block.height)
+            self.utxo_set.update_from_block(block.header, block.height)
 
     def mine_new_block(self):
         # Get previous block hash from chain tip
@@ -194,10 +192,13 @@ class Miner:
         else:
             prev_hash = bytes(32)  # Genesis block
 
+        coinbase_data = (self.chain.tip.height + 1 if self.chain.tip else 0).to_bytes(4, 'little')
+        script_bytes = ScriptBuilder._push_data(coinbase_data)
+
         candidate_block = self.create_candidate_block(
             prev_hash=prev_hash,
             transactions=list(self.mempool.values()),
-            coinbase_data=b'' + (self.chain.tip.height + 1 if self.chain.tip else 0).to_bytes(4, 'little'),
+            coinbase_data=CScript(script_bytes),
             miner_reward=Miner.BLOCK_REWARD,
             script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey),
             time=None
@@ -205,23 +206,51 @@ class Miner:
 
         # Mine and add to chain
         candidate_block.mine()
-        self.update_local_state(candidate_block)
+        return candidate_block
 
     def run(self):
         """Continuously mines new blocks."""
         while True:
-            self.mine_new_block()
-            self.on_block_mine()
-
-    def on_block_mine(self):
-        ...
+            block = self.mine_new_block()
+            self.update_local_state(block)
 
 
 def main():
+    import time
+    from random import random
+
     # Recipient's public key (bytes)
-    miner_pubkey = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
-    miner = Miner(miner_pubkey)
-    miner.run()
+    miner1_pubkey = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
+    miner2_pubkey = bytes.fromhex("026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20")
+
+    miner1_script = ScriptBuilder.p2pkh_script_pubkey(miner1_pubkey)
+    miner2_script = ScriptBuilder.p2pkh_script_pubkey(miner2_pubkey)
+
+    miner1 = Miner(miner1_pubkey)
+    miner2 = Miner(miner2_pubkey)
+
+    while True:
+        r1 = random()
+        r2 = random()
+
+        miner = (miner1 if r1 <= 0.375 else miner2)
+
+        block = miner.mine_new_block()
+        miner1.update_local_state(block)
+        miner2.update_local_state(block)
+
+        if r2 <= 0.165:
+            miner2.chain.tip = miner2.chain.tip.pprev
+            input("Fork found! Press any key to continue")
+
+        miner.chain.print_tree()
+
+        balance = miner1.utxo_set.get_balance() / (10 ** 8)
+        miner1_balance = miner1.utxo_set.get_balance(miner1_script) / (10 ** 8)
+        miner2_balance = miner1.utxo_set.get_balance(miner2_script) / (10 ** 8)
+        print(f"Chain Balance: {balance}    Miner A: {miner1_balance}   Miner B: {miner2_balance}")
+
+        time.sleep(3)
 
 
 if __name__ == '__main__':
