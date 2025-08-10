@@ -1,6 +1,9 @@
 from datetime import datetime
 from typing import Dict
 
+from bignum import set_compact
+from bignum import get_compact
+from block import mine
 from block import CBlock
 from block import CBlockHeader
 from block_index import Chain
@@ -13,86 +16,58 @@ from transaction import CTxOut
 from utxo import UTXO
 from utxo import UTXOSet
 
-
-def to_compact(target: int) -> int:
-    """Convert 256-bit target integer to compact nBits representation"""
-    # Get minimal big-endian representation
-    data = target.to_bytes(32, 'big').lstrip(b'\x00')
-    if not data:
-        return 0
-        
-    n = len(data)
-    
-    # Take first 3 bytes for coefficient
-    if n > 3:
-        coefficient = int.from_bytes(data[:3], 'big')
-    else:
-        # Pad with zeros to 3 bytes
-        coefficient = int.from_bytes(data, 'big') << (8 * (3 - n))
-    
-    return (n << 24) | coefficient
+max_uint256 = (1 << 256) - 1
+PROOF_OF_WORK_LIMIT = max_uint256 >> 32  # Target: 0x1f00ffff
 
 
-def from_compact(nBits: int) -> int:
-    """Convert compact nBits to 256-bit target integer"""
-    exponent = nBits >> 24
-    coefficient = nBits & 0x007fffff
-    
-    if exponent <= 3:
-        return coefficient >> (8 * (3 - exponent))
-    else:
-        return coefficient << (8 * (exponent - 3))
+def get_next_work_required(tip: CBlock) -> int:
+    TARGET_TIMESPAN = 14 * 24 * 60 * 60  # 14 days in seconds
+    TARGET_SPACING = 10 * 60
+    INTERVAL = TARGET_TIMESPAN // TARGET_SPACING # Blocks between adjustments
+
+    """Calculate new nBits for next block"""
+    if not tip:
+        return get_compact(PROOF_OF_WORK_LIMIT)
+
+    height = tip.height
+
+    # Only adjust every 2016 blocks
+    if height % INTERVAL != 0:
+        return tip.header.nBits
+
+    # Get reference blocks using chain structure
+    first_block = tip
+    for _ in range(INTERVAL):
+        first_block = first_block.pprev
+        if not first_block:
+            return get_compact(PROOF_OF_WORK_LIMIT)
+
+    last_block = tip
+    actual_timespan = last_block.header.nTime - first_block.header.nTime
+
+    # Clamp timespan to 0.25x-4x of target
+    min_timespan = TARGET_TIMESPAN // 4
+    max_timespan = TARGET_TIMESPAN * 4
+    actual_timespan = min(max(actual_timespan, min_timespan), max_timespan)
+
+    # Calculate new target
+    old_target = set_compact(last_block.header.nBits)
+    new_target = old_target * actual_timespan // TARGET_TIMESPAN
+
+    # Apply genesis target as upper limit
+    new_target = min(new_target, PROOF_OF_WORK_LIMIT)
+
+    return get_compact(new_target)
 
 
 class Miner:
     BLOCK_REWARD = 5_000_000_000  # 50 BTC in satoshis
-    TARGET_TIMESPAN = 14 * 24 * 60 * 60  # 14 days in seconds
-    ADJUSTMENT_INTERVAL = 2016  # Blocks between adjustments
 
     def __init__(self, miner_pubkey):
         self.chain = Chain()  # New chain index system
         self.utxo_set = UTXOSet()
         self.mempool: Dict[bytes, CTransaction] = {}
         self.miner_pubkey = miner_pubkey
-        
-        # Genesis block difficulty
-        self.genesis_bits = 0x1f00ffff
-        self.genesis_target = from_compact(self.genesis_bits)
-
-    def get_next_bits(self) -> int:
-        """Calculate new nBits for next block"""
-        if not self.chain.tip:
-            return self.genesis_bits
-            
-        height = self.chain.tip.height
-        
-        # Only adjust every 2016 blocks
-        if height % self.ADJUSTMENT_INTERVAL != 0:
-            return self.chain.tip.header.nBits
-
-        # Get reference blocks using chain structure
-        first_block = self.chain.tip
-        for _ in range(self.ADJUSTMENT_INTERVAL):
-            first_block = first_block.pprev
-            if not first_block:
-                return self.genesis_bits
-
-        last_block = self.chain.tip
-        actual_timespan = last_block.header.nTime - first_block.header.nTime
-
-        # Clamp timespan to 0.25x-4x of target
-        min_timespan = self.TARGET_TIMESPAN // 4
-        max_timespan = self.TARGET_TIMESPAN * 4
-        actual_timespan = min(max(actual_timespan, min_timespan), max_timespan)
-
-        # Calculate new target
-        old_target = from_compact(last_block.header.nBits)
-        new_target = old_target * actual_timespan // self.TARGET_TIMESPAN
-        
-        # Apply genesis target as upper limit
-        new_target = min(new_target, self.genesis_target)
-        
-        return to_compact(new_target)
 
     def create_coinbase_transaction(self, coinbase_data, miner_reward, script_pubkey):
         """

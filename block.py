@@ -2,6 +2,7 @@ import io
 import time
 from typing import List
 
+from bignum import set_compact
 from crypto import hash256
 from serialize import compact_size
 from serialize import read_compact_size
@@ -53,6 +54,7 @@ class CBlockHeader:
         n_bits = int.from_bytes(stream.read(4), 'little')
         n_nonce = int.from_bytes(stream.read(4), 'little')
         return cls(version, hash_prev_block, hash_merkle_root, n_time, n_bits, n_nonce)
+
 
 class CBlock(CBlockHeader):
     def __init__(self, header: CBlockHeader, vtx: list[CTransaction]):
@@ -107,85 +109,6 @@ class CBlock(CBlockHeader):
         header_data = super().serialize()  # Only serialize header (80 bytes)
         return hash256(header_data)
 
-    def _compute_target(self) -> int:
-        """
-        Convert nBits to 256-bit target integer (Bitcoin Core compatible)
-        Follows arith_uint256::SetCompact() from Bitcoin Core
-        """
-        exponent = self.nBits >> 24
-        coefficient = self.nBits & 0x007fffff
-
-        if exponent <= 3:
-            target = coefficient >> (8 * (3 - exponent))
-        else:
-            target = coefficient << (8 * (exponent - 3))
-
-        # Cap to 256 bits (prevent overflow)
-        return target & ((1 << 256) - 1)
-
-    def mine(self, max_attempts=10) -> bool:
-        """
-        Proof-of-Work mining implementation mirroring Satoshi's original logic
-        from Bitcoin Core 0.1.0. Follows the same nonce iteration and timestamp
-        update behavior.
-
-        Args:
-            max_attempts: Maximum timestamp updates before failing
-
-        Returns:
-            True if block mined, False if failed
-        """
-        # Calculate target from nBits
-        target = self._compute_target()
-        if target == 0:
-            raise ValueError("Invalid target (nBits too low)")
-
-        # Ensure merkle root is current
-        self.hashMerkleRoot = self.build_merkle_root()
-
-        start_time = time.time()
-        last_print = start_time
-        hashes_processed = 0
-        attempts = 0
-
-        print(f"Mining started (Target: {target:064x})")
-
-        while attempts < max_attempts:
-            # Iterate through full 32-bit nonce space (0 to 2^32-1)
-            for nonce in range(0, 0x100000000):
-                self.nNonce = nonce
-                block_hash = self.get_hash()
-                hashes_processed += 1
-
-                # Convert hash to integer (big-endian)
-                hash_int = int.from_bytes(block_hash, 'big')
-
-                # Check if block hash meets target
-                if hash_int <= target:
-                    elapsed = time.time() - start_time
-                    hashrate = hashes_processed / max(elapsed, 0.001)
-                    print(f"\nBlock mined! Nonce: {nonce}")
-                    print(f"Hash (LE): {block_hash[::-1].hex()}")  # Standard display format
-                    print(f"Elapsed: {elapsed:.2f}s | Hashrate: {hashrate:.2f} H/s")
-                    return True
-
-                # Periodic status update every 5 seconds
-                current_time = time.time()
-                if current_time - last_print >= 5:
-                    elapsed = current_time - start_time
-                    hashrate = hashes_processed / max(elapsed, 0.001)
-                    print(f"Hashrate: {hashrate:.2f} H/s | Nonce: {nonce}/4294967295 | "
-                          f"Time: {int(elapsed)}s", end='\r')
-                    last_print = current_time
-
-            # Nonce space exhausted - update timestamp
-            attempts += 1
-            self.nTime += 1  # Minimal timestamp increment
-            print(f"\nNonce range exhausted. Updated time to {self.nTime} (Attempt {attempts}/{max_attempts})")
-
-        print("Mining failed: Maximum attempts reached")
-        return False
-
 
 def create_coinbase_transaction(coinbase_data: CScript, miner_reward: int, script_pubkey: CScript):
     """
@@ -209,7 +132,6 @@ def create_coinbase_transaction(coinbase_data: CScript, miner_reward: int, scrip
 
 def main():
     pubkey_bytes = bytes.fromhex("02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5")
-    
     p2pkh_script = ScriptBuilder.p2pkh_script_pubkey(pubkey_bytes)
 
     # Create a coinbase transaction
