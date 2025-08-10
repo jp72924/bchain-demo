@@ -1,5 +1,6 @@
 import time
 
+from bignum import set_compact
 from block import CBlock
 from block import CBlockHeader
 from crypto import hash256
@@ -40,7 +41,7 @@ def validate_block_header(block: CBlock, prev_block_hash: bytes, block_height: i
     
     # Check timestamp (not too far in future)
     current_time = int(time.time())
-    MAX_FUTURE_BLOCK_TIME = 7200  # 2 hours
+    MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60  # 2 hours
     if block.nTime > current_time + MAX_FUTURE_BLOCK_TIME:
         raise BlockValidationError(f"Block timestamp {block.nTime} is too far in future")
     
@@ -55,9 +56,7 @@ def validate_pow(block: CBlock):
     block_hash = block.get_hash()
     
     # Convert nBits to target
-    exponent = block.nBits >> 24
-    coefficient = block.nBits & 0x007fffff
-    target = coefficient * (1 << (8 * (exponent - 3)))
+    target = set_compact(block.nBits)
 
     # Check if hash meets target
     if int.from_bytes(block_hash, 'big') > target:
