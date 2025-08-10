@@ -1,11 +1,21 @@
 from typing import List, Dict, Optional, Tuple
-from block import CBlock, CBlockHeader
+
+from bignum import set_compact
+from block import CBlock
+from block import CBlockHeader
+
+
+def calculate_work(target: int) -> int:
+    """Calculate the work represented by a given target."""
+    return (1 << 256) // (target + 1)
 
 
 class CBlockIndex:
     """
     Represents a single block in the blockchain with Bitcoin-specific features.
     """
+    MEDIAN_TIMESPAN = 11
+
     __slots__ = ('header', 'hash', 'height', 'pprev', 'pnext', 'children', 'chain_work')
     
     def __init__(self, block: CBlock, parent: Optional['CBlockIndex'] = None):
@@ -28,24 +38,32 @@ class CBlockIndex:
             self.height = parent.height + 1
             parent.children.append(self)
             # Calculate chain work: parent + current block's work
-            self.chain_work = parent.chain_work + self.calculate_work()
+            block_work = calculate_work(set_compact(self.header.nBits))
+            self.chain_work = parent.chain_work + block_work
 
-    def calculate_work(self) -> int:
-        """Calculate the work represented by this block (Bitcoin style)"""
-        # Target is derived from nBits
-        exponent = self.header.nBits >> 24
-        coefficient = self.header.nBits & 0x007fffff
-        
-        # Calculate target value
-        if exponent <= 3:
-            target = coefficient >> (8 * (3 - exponent))
-        else:
-            target = coefficient << (8 * (exponent - 3))
-        
-        # Cap to 256 bits and calculate work (2^256 / (target + 1))
-        max_target = (1 << 256) - 1
-        target = min(target, max_target)
-        return (2 << 256) // (target + 1)
+    def get_median_time_past(self) -> int:
+        """Calculate the Median Time Past (MTP) of the last N blocks"""
+        # Collect timestamps from previous N blocks
+        pmedian = []
+        pindex = self
+
+        # Traverse back through the chain (up to N blocks)
+        for _ in range(self.MEDIAN_TIMESPAN):
+            if pindex is None:
+                break
+            pmedian.append(pindex.header.nTime)
+            pindex = pindex.pprev
+
+        # If no blocks available, return 0
+        if not pmedian:
+            return 0
+
+        # Sort timestamps in ascending order
+        pmedian.sort()
+
+        # Calculate median position (middle of sorted list)
+        # Uses integer division: n // 2 per Bitcoin's implementation
+        return pmedian[len(pmedian) // 2]
 
     def __repr__(self):
         """Provides a string representation for debugging"""
