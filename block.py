@@ -14,6 +14,70 @@ from transaction import CTxOut
 from transaction import CTransaction
 
 
+def mine(block: 'CBlock', max_attempts=10) -> bool:
+        """
+        Proof-of-Work mining implementation mirroring Satoshi's original logic
+        from Bitcoin Core 0.1.0. Follows the same nonce iteration and timestamp
+        update behavior.
+
+        Args:
+            max_attempts: Maximum timestamp updates before failing
+
+        Returns:
+            True if block mined, False if failed
+        """
+        # Calculate target from nBits
+        target = set_compact(block.nBits)
+        if target == 0:
+            raise ValueError("Invalid target (nBits too low)")
+
+        # Ensure merkle root is current
+        block.hashMerkleRoot = block.build_merkle_root()
+
+        start_time = time.time()
+        last_print = start_time
+        hashes_processed = 0
+        attempts = 0
+
+        print(f"Mining started (Target: {target:064x})")
+
+        while attempts < max_attempts:
+            # Iterate through full 32-bit nonce space (0 to 2^32-1)
+            for nonce in range(0, 0x100000000):
+                block.nNonce = nonce
+                block_hash = block.get_hash()
+                hashes_processed += 1
+
+                # Convert hash to integer (big-endian)
+                hash_int = int.from_bytes(block_hash, 'big')
+
+                # Check if block hash meets target
+                if hash_int <= target:
+                    elapsed = time.time() - start_time
+                    hashrate = hashes_processed / max(elapsed, 0.001)
+                    print(f"\nBlock mined! Nonce: {nonce}")
+                    print(f"Hash (LE): {block_hash[::-1].hex()}")  # Standard display format
+                    print(f"Elapsed: {elapsed:.2f}s | Hashrate: {hashrate:.2f} H/s")
+                    return True
+
+                # Periodic status update every 5 seconds
+                current_time = time.time()
+                if current_time - last_print >= 5:
+                    elapsed = current_time - start_time
+                    hashrate = hashes_processed / max(elapsed, 0.001)
+                    print(f"Hashrate: {hashrate:.2f} H/s | Nonce: {nonce}/4294967295 | "
+                          f"Time: {int(elapsed)}s", end='\r')
+                    last_print = current_time
+
+            # Nonce space exhausted - update timestamp
+            attempts += 1
+            block.nTime += 1  # Minimal timestamp increment
+            print(f"\nNonce range exhausted. Updated time to {block.nTime} (Attempt {attempts}/{max_attempts})")
+
+        print("Mining failed: Maximum attempts reached")
+        return False
+
+
 class CBlockHeader:
     def __init__(self, nVersion: int, hashPrevBlock: bytes, hashMerkleRoot: bytes,
                  nTime: int, nBits: int, nNonce: int):
@@ -155,7 +219,7 @@ def main():
     block.hashMerkleRoot = block.build_merkle_root()  # Calculate Merkle root
 
     # Mine the block
-    block.mine()
+    mine(block)
 
 
 if __name__ == '__main__':

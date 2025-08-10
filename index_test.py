@@ -1,6 +1,6 @@
 import time
 
-from block import CBlock, CBlockHeader, create_coinbase_transaction
+from block import CBlock, CBlockHeader, mine, create_coinbase_transaction
 from script import CScript
 from script_utils import ScriptBuilder
 from transaction import CTransaction, CTxIn, CTxOut, COutPoint
@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     # Mine the genesis block
     print("Mining genesis block...")
-    genesis_block.mine(max_attempts=100)
+    mine(genesis_block, max_attempts=100)
     print(f"Genesis mined! Hash: {genesis_block.get_hash().hex()}")
 
     # Add to blockchain
@@ -88,7 +88,7 @@ if __name__ == "__main__":
 
     # Mine block 1
     print("Mining block 1...")
-    block1.mine()
+    mine(block1)
     print(f"Block 1 mined! Hash: {block1.get_hash().hex()}")
 
     # Add to blockchain
@@ -124,7 +124,7 @@ if __name__ == "__main__":
 
     # Mine block 2A
     print("Mining block 2A...")
-    block2a.mine()
+    mine(block2a)
     print(f"Block 2A mined! Hash: {block2a.get_hash().hex()}")
 
     # Add to blockchain - creates fork
@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     # Mine block 3A
     print("Mining block 3A...")
-    block3a.mine()
+    mine(block3a)
     print(f"Block 3A mined! Hash: {block3a.get_hash().hex()}")
 
     # Add to blockchain - should cause reorganization
