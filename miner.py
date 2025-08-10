@@ -88,12 +88,11 @@ class Miner:
         )
         return tx
 
-    def create_candidate_block(self, prev_hash, transactions, coinbase_data, miner_reward, script_pubkey, time=None):
-        if time is None:
-            time = int(datetime.now().timestamp())
+    def create_candidate_block(self, prev_block, transactions, coinbase_data, miner_reward, script_pubkey):
+        time = max(prev_block.get_median_time_past() if prev_block else 0, int(datetime.now().timestamp()))
 
         # Calculate dynamic difficulty
-        bits = self.get_next_bits()
+        bits = get_next_work_required(prev_block)
 
         # Create coinbase transaction
         coinbase_tx = self.create_coinbase_transaction(
@@ -104,6 +103,7 @@ class Miner:
 
         transactions = [coinbase_tx] + transactions
 
+        prev_hash = prev_block.hash if prev_block else bytes(32)
         block_header = CBlockHeader(
             nVersion=1,
             hashPrevBlock=prev_hash,
@@ -163,24 +163,23 @@ class Miner:
     def mine_new_block(self):
         # Get previous block hash from chain tip
         if self.chain.tip:
-            prev_hash = self.chain.tip.hash
+            prev_block = self.chain.tip
         else:
-            prev_hash = bytes(32)  # Genesis block
+            prev_block = None  # Genesis block
 
         coinbase_data = (self.chain.tip.height + 1 if self.chain.tip else 0).to_bytes(4, 'little')
         script_bytes = ScriptBuilder._push_data(coinbase_data)
 
         candidate_block = self.create_candidate_block(
-            prev_hash=prev_hash,
+            prev_block=prev_block,
             transactions=list(self.mempool.values()),
             coinbase_data=CScript(script_bytes),
             miner_reward=Miner.BLOCK_REWARD,
             script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey),
-            time=None
         )
 
         # Mine and add to chain
-        candidate_block.mine()
+        mine(candidate_block)
         return candidate_block
 
     def run(self):
@@ -224,6 +223,11 @@ def main():
         miner1_balance = miner1.utxo_set.get_balance(miner1_script) / (10 ** 8)
         miner2_balance = miner1.utxo_set.get_balance(miner2_script) / (10 ** 8)
         print(f"Chain Balance: {balance}    Miner A: {miner1_balance}   Miner B: {miner2_balance}")
+
+        epoch_time = miner1.chain.tip.header.nTime
+        dt = datetime.fromtimestamp(epoch_time)
+        formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"Median Time: {formatted_time}")
 
         time.sleep(3)
 
