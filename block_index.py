@@ -69,7 +69,7 @@ class CBlockIndex:
         """Provides a string representation for debugging"""
         return f"CBlockIndex(height={self.height}, hash={self.hash.hex()[:8]}...)"
 
-class Chain:
+class CChain:
     """
     Maintains a tree-shaped blockchain with Bitcoin-style validation.
     """
