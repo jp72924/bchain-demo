@@ -6,18 +6,16 @@ from bignum import get_compact
 from block import mine
 from block import CBlock
 from block import CBlockHeader
-from block_index import Chain
+from chainstate import ChainState
 from script import CScript
 from script_utils import ScriptBuilder
 from transaction import COutPoint
 from transaction import CTransaction
 from transaction import CTxIn
 from transaction import CTxOut
-from utxo import UTXO
-from utxo import UTXOSet
 
 max_uint256 = (1 << 256) - 1
-PROOF_OF_WORK_LIMIT = max_uint256 >> 32  # Target: 0x1f00ffff
+PROOF_OF_WORK_LIMIT = max_uint256 >> 20  # Target: 0x1d00ffff
 
 
 def get_next_work_required(tip: CBlock) -> int:
@@ -63,11 +61,12 @@ def get_next_work_required(tip: CBlock) -> int:
 class Miner:
     BLOCK_REWARD = 5_000_000_000  # 50 BTC in satoshis
 
-    def __init__(self, miner_pubkey):
-        self.chain = Chain()  # New chain index system
-        self.utxo_set = UTXOSet()
-        self.mempool: Dict[bytes, CTransaction] = {}
+    def __init__(self, chain_state: ChainState, miner_pubkey: bytes):
+        self.chain_state = chain_state
         self.miner_pubkey = miner_pubkey
+
+        if miner_pubkey:
+            self.miner_script = ScriptBuilder.p2pkh_script_pubkey(miner_pubkey)
 
     def create_coinbase_transaction(self, coinbase_data, miner_reward, script_pubkey):
         """
@@ -116,66 +115,22 @@ class Miner:
         block.hashMerkleRoot = block.build_merkle_root()
         return block
 
-    def update_local_state(self, block):
-        """Adds the newly mined block to the blockchain index"""
-        try:
-            new_index = self.chain.add_block(block)
-            
-            # Update UTXO set based on new chain state
-            if self.chain.tip == new_index:
-                # Simple extension case
-                self.utxo_set.update_from_block(block, new_index.height)
-            else:
-                # Handle chain reorganization
-                self.handle_chain_reorg(new_index)
-                
-            # Clear mined transactions from mempool
-            for tx in block.vtx[1:]:  # Skip coinbase
-                txid = tx.get_hash()
-                if txid in self.mempool:
-                    del self.mempool[txid]
-                    
-        except ValueError as e:
-            print(f"Block addition failed: {e}")
-
-    def handle_chain_reorg(self, new_tip):
-        """Update UTXO set during chain reorganization"""
-        # 1. Find fork point
-        fork_block = self.chain._find_fork_point(self.chain.tip, new_tip)
-        
-        # 2. Disconnect blocks from old chain
-        current = self.chain.tip
-        while current != fork_block:
-            self.utxo_set.disconnect_block(current.header)
-            current = current.pprev
-        
-        # 3. Connect blocks from new chain
-        blocks_to_connect = []
-        current = new_tip
-        while current != fork_block:
-            blocks_to_connect.append(current)
-            current = current.pprev
-        blocks_to_connect.reverse()  # Apply in order
-        
-        for block in blocks_to_connect:
-            self.utxo_set.update_from_block(block.header, block.height)
-
     def mine_new_block(self):
         # Get previous block hash from chain tip
-        if self.chain.tip:
-            prev_block = self.chain.tip
+        if self.chain_state.chain.tip:
+            prev_block = self.chain_state.chain.tip
         else:
             prev_block = None  # Genesis block
 
-        coinbase_data = (self.chain.tip.height + 1 if self.chain.tip else 0).to_bytes(4, 'little')
+        coinbase_data = (self.chain_state.chain.tip.height + 1 if self.chain_state.chain.tip else 0).to_bytes(4, 'little')
         script_bytes = ScriptBuilder._push_data(coinbase_data)
 
         candidate_block = self.create_candidate_block(
             prev_block=prev_block,
-            transactions=list(self.mempool.values()),
+            transactions=list(self.chain_state.mempool.values()),
             coinbase_data=CScript(script_bytes),
             miner_reward=Miner.BLOCK_REWARD,
-            script_pubkey=ScriptBuilder.p2pkh_script_pubkey(self.miner_pubkey),
+            script_pubkey=self.miner_script,
         )
 
         # Mine and add to chain
@@ -186,7 +141,7 @@ class Miner:
         """Continuously mines new blocks."""
         while True:
             block = self.mine_new_block()
-            self.update_local_state(block)
+            self.chain_state.update(block)
 
 
 def main():
@@ -200,31 +155,24 @@ def main():
     miner1_script = ScriptBuilder.p2pkh_script_pubkey(miner1_pubkey)
     miner2_script = ScriptBuilder.p2pkh_script_pubkey(miner2_pubkey)
 
-    miner1 = Miner(miner1_pubkey)
-    miner2 = Miner(miner2_pubkey)
+    shared_state = ChainState()
+
+    miner1 = Miner(shared_state, miner1_pubkey)
+    miner2 = Miner(shared_state, miner2_pubkey)
 
     while True:
-        r1 = random()
-        r2 = random()
-
-        miner = (miner1 if r1 <= 0.375 else miner2)
+        miner = (miner1 if random() >= 0.5 else miner2)
 
         block = miner.mine_new_block()
-        miner1.update_local_state(block)
-        miner2.update_local_state(block)
+        shared_state.update(block)
+        shared_state.chain.print_tree()
 
-        if r2 <= 0.165:
-            miner2.chain.tip = miner2.chain.tip.pprev
-            input("Fork found! Press any key to continue")
-
-        miner.chain.print_tree()
-
-        balance = miner1.utxo_set.get_balance() / (10 ** 8)
-        miner1_balance = miner1.utxo_set.get_balance(miner1_script) / (10 ** 8)
-        miner2_balance = miner1.utxo_set.get_balance(miner2_script) / (10 ** 8)
+        balance = shared_state.utxo_set.get_balance() / (10 ** 8)
+        miner1_balance = shared_state.utxo_set.get_balance(miner1_script) / (10 ** 8)
+        miner2_balance = shared_state.utxo_set.get_balance(miner2_script) / (10 ** 8)
         print(f"Chain Balance: {balance}    Miner A: {miner1_balance}   Miner B: {miner2_balance}")
 
-        epoch_time = miner1.chain.tip.header.nTime
+        epoch_time = shared_state.chain.tip.header.nTime
         dt = datetime.fromtimestamp(epoch_time)
         formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
         print(f"Median Time: {formatted_time}")
