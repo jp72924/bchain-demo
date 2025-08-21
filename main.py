@@ -32,9 +32,13 @@ class BlockHandler:
                 print(f"[{self.node.node_id}] Received block: {block.get_hash()[::-1].hex()}")
 
                 chain = self.node.chain_state.chain
-                block_height = self.node.chain_state.chain.tip.height
-                utxo_set = self.node.utxo_set
-                prev_hash = self.node.chain_state.chain.tip.pprev.hash if chain else bytes(32)
+                utxo_set = self.node.chain_state.utxo_set
+
+                block_height = 0
+                prev_hash = bytes(32)
+                if chain.tip:
+                    block_height = self.node.chain_state.chain.tip.height + 1
+                    prev_hash = self.node.chain_state.chain.tip.hash
 
                 if validate_block(block, utxo_set, prev_hash, block_height):
                     if block_hash not in self.node.chain_state.chain.block_map:
@@ -118,8 +122,9 @@ class GetDataHandler:
             inv_data = message['inventory']
             for item_type, item_hash in inv_data:
                 if item_type == 'MSG_BLOCK':
-                    if item_hash in self.node.chain_state.chain.block_map:
-                        block = self.node.chain_state.chain.block_map.get(item_hash).header
+                    block_hash = bytes.fromhex(item_hash)
+                    if block_hash in self.node.chain_state.chain.block_map:
+                        block = self.node.chain_state.chain.block_map.get(block_hash).header
                         response = {
                             'id': block.get_hash().hex(),
                             'type': 'BLOCK',
@@ -128,8 +133,9 @@ class GetDataHandler:
                         # Send direct response through original socket
                         self.node._send_direct_message(response, sock=sock)
                 elif item_type == 'MSG_TX':
-                    if item_hash in self.node.chain_state.mempool:
-                        tx = self.node.chain_state.mempool[item_hash]
+                    tx_hash = bytes.fromhex(item_hash)
+                    if tx_hash in self.node.chain_state.mempool:
+                        tx = self.node.chain_state.mempool[tx_hash]
                         response = {
                             'id': tx.get_hash().hex(),
                             'type': 'TX',
@@ -198,11 +204,13 @@ if __name__ == "__main__":
         node_id="NODE-B"
     )
 
-    time.sleep(10)
+    time.sleep(5)
 
     miner = Miner(shared_state, pubkey1)
-    miner.run()
+    threading.Thread(target=miner.run, daemon=True).start()
 
     # Keep nodes running
     while True:
-        time.sleep(1)
+        time.sleep(5)
+        isolated_state.chain.print_main_chain()
+

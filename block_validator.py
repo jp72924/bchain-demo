@@ -19,7 +19,7 @@ def validate_block(block: CBlock, utxo_set: UTXOSet, prev_block_hash: bytes, blo
     Returns True if valid, raises BlockValidationError otherwise
     """
     # 1. Header Validation
-    validate_block_header(block, prev_block_hash, block_height)
+    validate_block_header(block, prev_block_hash)
 
     # 2. Proof-of-Work Validation
     validate_pow(block)
@@ -33,7 +33,7 @@ def validate_block(block: CBlock, utxo_set: UTXOSet, prev_block_hash: bytes, blo
     return True
 
 
-def validate_block_header(block: CBlock, prev_block_hash: bytes, block_height: int):
+def validate_block_header(block: CBlock, prev_block_hash: bytes):
     """Validate block header structure and context"""
     # Check previous block hash
     if block.hashPrevBlock != prev_block_hash:
