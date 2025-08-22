@@ -8,6 +8,7 @@ from typing import List
 from block import CBlock
 from block_index import CBlockIndex
 from chainstate import ChainState
+from ibd import IBDState
 from transaction import CTransaction
 
 # Network components
@@ -148,6 +149,64 @@ class GetDataHandler:
         return False
 
 
+class GetBlocksHandler:
+    def __init__(self, node: 'BlockchainNode'):
+        self.node = node
+
+    def __call__(self, message: dict, sock: socket.socket) -> bool:
+        """Handle GETBLOCKS request (peer asking for block inventory)"""
+        locator = [bytes.fromhex(h) for h in message['locator']]
+        hash_stop = bytes.fromhex(message['hash_stop'])
+
+        # Find last common block
+        common_block = self._find_common_block(locator)
+
+        # Send inventory of next blocks
+        inventory = []
+        current = common_block.pnext if common_block else self.node.chain_state.chain.genesis
+        max_blocks = 500  # Limit response size
+
+        while current and max_blocks > 0:
+            if current.hash == hash_stop:
+                break
+            inventory.append(('MSG_BLOCK', current.hash.hex()))
+            current = current.pnext
+            max_blocks -= 1
+
+        # Send INV message
+        self.node.send_message({
+            'type': 'INV',
+            'inventory': inventory
+        })
+        return False
+
+    def _find_common_block(self, locator):
+        """Find last common block from locator"""
+        for block_hash in locator:
+            if block_hash in self.node.chain_state.chain.block_map:
+                return self.node.chain_state.chain.block_map[block_hash]
+        return None
+
+
+class IBDBlockHandler(BlockHandler):
+    """Special handler for blocks during IBD"""
+    def __call__(self, message: dict, sock: socket.socket) -> bool:
+        try:
+            block_data = bytes.fromhex(message['block'])
+            block = CBlock.deserialize(block_data)
+
+            # Process only if from IBD peer
+            if self.node.ibd.active and sock == self.node.ibd.active_peer:
+                self.node.ibd.process_block(block)
+                return False
+            else:
+                # Normal block processing
+                return super().__call__(message, sock)
+        except Exception as e:
+            print(f"IBD block processing error: {e}")
+            return False
+
+
 class BlockchainNode(PeerNode):
     def __init__(self, chain_state: ChainState, host: str, port: int, bootstrap_peers: list,  node_id: str):
         super().__init__(host, port, bootstrap_peers, node_id)
@@ -155,9 +214,14 @@ class BlockchainNode(PeerNode):
         # Blockchain state
         self.chain_state = chain_state
         self.chain_state.register(self.on_chain_update)
+        self.chain_state.node = self  # Set back-reference
+        self.ibd = IBDState(chain_state)
+
+        # Register additional handlers
+        self.router.add_handler("GETBLOCKS", GetBlocksHandler(self))
 
         # Register chain message handlers
-        self.router.add_handler("BLOCK", BlockHandler(self))
+        self.router.add_handler("BLOCK", IBDBlockHandler(self))
         self.router.add_handler("TX", TxHandler(self))
         self.router.add_handler("INV", InventoryHandler(self))
         self.router.add_handler("GET_DATA", GetDataHandler(self))
@@ -169,6 +233,14 @@ class BlockchainNode(PeerNode):
             'inventory': items
         })
 
+    def on_peer_connected(self, sock, address, connection_type):
+        """Override peer connection handler"""
+        # super().on_peer_connected(sock, address, connection_type)
+
+        # Start IBD if needed
+        if self.ibd.should_start_ibd() and not self.ibd.active:
+            self.ibd.start_ibd(sock)
+
     def on_chain_update(self, block):
         tip_hash = self.chain_state.chain.tip.hash.hex()
         self.seen_messages.add(tip_hash)
@@ -178,6 +250,19 @@ class BlockchainNode(PeerNode):
         inv_data = [(item_type, item_hash)]
         self.relay_inventory(inv_data)
 
+        # Check if we should request next block
+        if self.ibd.active:
+            # Check for timeout
+            if time.time() - self.ibd.last_request_time > self.ibd.STALE_THRESHOLD:
+                print("IBD request timeout, retrying...")
+                self.ibd._request_next_block()
+
+            # Check if we've reached target height
+            if (self.chain_state.chain.tip and
+                self.chain_state.chain.tip.height >= self.ibd.target_height):
+                print(f"IBD completed at height {self.chain_state.chain.tip.height}")
+                self.ibd.active = False
+
 
 if __name__ == "__main__":
     # Recipient's public key (bytes)
@@ -185,6 +270,7 @@ if __name__ == "__main__":
     # pubkey2 = bytes.fromhex("026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20")
 
     shared_state = ChainState()
+    isolated_state = ChainState()
 
     miner_node = BlockchainNode(
         chain_state=shared_state,
@@ -194,8 +280,16 @@ if __name__ == "__main__":
         node_id="NODE-A"
     )
 
-    isolated_state = ChainState()
-    
+    time.sleep(5)
+
+    miner = Miner(shared_state, pubkey1)
+    for x in range(5):
+        block = miner.mine_new_block()
+        shared_state.update(block)
+        # isolated_state.update(block) if x <= 2 else ...
+
+    time.sleep(5)
+
     regular_node = BlockchainNode(
         chain_state=isolated_state,
         host='localhost',
@@ -203,11 +297,6 @@ if __name__ == "__main__":
         bootstrap_peers=[('127.0.0.1', 8333)],
         node_id="NODE-B"
     )
-
-    time.sleep(5)
-
-    miner = Miner(shared_state, pubkey1)
-    threading.Thread(target=miner.run, daemon=True).start()
 
     # Keep nodes running
     while True:

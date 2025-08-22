@@ -48,6 +48,9 @@ class PeerNode:
         threading.Thread(target=self._handle_peer_messages, daemon=True).start()
         threading.Thread(target=self._dispatch_queued_messages, daemon=True).start()
 
+    def on_peer_connected(self, sock: socket.socket, address: Tuple[str, int], connection_type: str):
+        raise NotImplementedError
+
     # --- Core Node Operations ---
     def send_message(self, message: dict):
         self.message_outbox.put(message)
@@ -136,9 +139,11 @@ class PeerNode:
             data = json.dumps(handshake_message).encode()
             framed = MessageFramer.frame_message(data)
             sock.sendall(framed)
-            
-            self._register_peer(sock, (host, port), "outgoing")
+
             print(f"[{self.node_id}] Sent HELLO to {host}:{port}")
+
+            self._register_peer(sock, (host, port), "outgoing")
+            self.on_peer_connected(sock, (host, port), "outgoing")
         except Exception as e:
             print(f"[{self.node_id}] Connection to {host}:{port} failed: {e}")
 
