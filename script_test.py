@@ -187,3 +187,46 @@ if __name__ == "__main__":
     print(f"ScriptPubKey: {script_pubkey}")
     print(f"ScriptSig: {script_sig}")
     print("Verification:", verify_script(script_sig, script_pubkey, tx, 0))  # Should output True
+
+    print("\n--- OP_RETURN Test Case ---")
+    # Generate key pair for the change output
+    sk = SigningKey.generate(curve=SECP256k1)
+    vk = sk.get_verifying_key()
+    pubkey = vk.to_string("compressed")
+    pubkey_hash = ripemd160(sha256(pubkey))
+
+    # Create a P2PKH script for the change output
+    change_script = ScriptBuilder.p2pkh_script_pubkey(pubkey_hash, is_hash=True)
+
+    # Create OP_RETURN script with some data
+    data_to_embed = b"Hello, Blockchain! This is OP_RETURN data."
+    # push_data = bytes([OP_PUSHDATA1, len(data_to_embed)]) + data_to_embed
+    # op_return_script = CScript(bytes([OP_RETURN]) + push_data)
+    op_return_script = ScriptBuilder.op_return_script_pubkey(data_to_embed)
+
+    # Create transaction with both OP_RETURN and change outputs
+    tx = CTransaction(
+        vin=[CTxIn(prevout=COutPoint(bytes(32), 0xffffffff), scriptSig=CScript(b""))],
+        vout=[
+            CTxOut(nValue=0, scriptPubKey=op_return_script),  # OP_RETURN must have 0 value
+            CTxOut(nValue=4_999_000_000, scriptPubKey=change_script)  # Change output
+        ]
+    )
+
+    # Sign transaction (only needed for the spendable output)
+    sighash = signature_hash(tx, 0, change_script, SIGHASH_ALL)
+    signature = sk.sign(sighash, hashfunc=hashlib.sha256)
+
+    # Build scriptSig for the input
+    script_sig = ScriptBuilder.p2pkh_script_sig(signature, pubkey)
+
+    # Attach and verify
+    tx.vin[0].scriptSig = script_sig
+    print(f"OP_RETURN ScriptPubKey: {op_return_script}")
+    print(f"Change ScriptPubKey: {change_script}")
+    print(f"ScriptSig: {script_sig}")
+    print(f"Embedded data: {data_to_embed.decode('utf-8')}")
+    print("Verification:", verify_script(script_sig, change_script, tx, 0))  # Should output True
+
+    # Verify the OP_RETURN output has 0 value
+    # print(f"OP_RETURN value: {tx.vout[0].nValue} satoshis (must be 0)")

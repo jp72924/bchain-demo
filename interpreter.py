@@ -6,6 +6,7 @@ from crypto import ripemd160
 from crypto import sha256
 from opcodes import *
 from script import CScript
+from script import is_p2sh
 from transaction import CTxIn
 from transaction import CTransaction
 
@@ -155,6 +156,10 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                 if stack.pop() == 0x00:
                     raise ScriptExecutionError("VERIFY_FAILED")
 
+            elif op == OP_RETURN:
+                # OP_RETURN immediately fails script execution
+                raise ScriptExecutionError("OP_RETURN_ENCOUNTERED")
+
             elif op == OP_EQUALVERIFY:
                 if len(stack) < 2:
                     raise ScriptExecutionError("STACK_UNDERFLOW")
@@ -178,16 +183,6 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
         return True
     except ScriptExecutionError:
         return False
-
-
-def is_p2sh(script_pubkey: CScript) -> bool:
-    """Check if script is a P2SH scriptPubKey."""
-    ops = script_pubkey.ops
-    return (len(ops) == 3 and
-            ops[0] == OP_HASH160 and
-            isinstance(ops[1], bytes) and len(ops[1]) == 20 and
-            ops[2] == OP_EQUAL)
-
 
 def verify_script(script_sig: CScript, script_pubkey: CScript, tx: CTransaction, input_index: int) -> bool:
     """

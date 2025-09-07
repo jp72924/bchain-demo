@@ -5,6 +5,7 @@ from crypto import hash160
 from opcodes import *
 from script import CScript
 
+
 class ScriptBuilder:
     @staticmethod
     def _push_data(data: bytes) -> bytes:
@@ -71,6 +72,17 @@ class ScriptBuilder:
             bytes([OP_HASH160]) +
             cls._push_data(script_hash) +
             bytes([OP_EQUAL])
+        )
+
+    @classmethod
+    def op_return_script_pubkey(cls, data: bytes) -> CScript:
+        """Build OP_RETURN script for data storage"""
+        if len(data) > 80:  # Standard limit for OP_RETURN data
+            raise ValueError("OP_RETURN data exceeds 80 bytes")
+
+        return CScript(
+            bytes([OP_RETURN]) +
+            cls._push_data(data)
         )
 
     @classmethod

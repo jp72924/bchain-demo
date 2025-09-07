@@ -8,6 +8,7 @@ from transaction import CTxIn
 from transaction import CTxOut
 from transaction import CTransaction
 from script import CScript
+from script import is_op_return
 from script_utils import ScriptBuilder
 
 
@@ -38,6 +39,10 @@ class UTXOSet:
             is_coinbase = tx.is_coinbase()
             tx_hash = tx.get_hash()
             for i, tx_out in enumerate(tx.vout):
+                # Skip OP_RETURN outputs as they are unspendable
+                if is_op_return(tx_out.scriptPubKey):
+                    continue
+
                 prevout = COutPoint(tx_hash, i)
                 self.utxos[prevout] = UTXO(
                     prevout=prevout,

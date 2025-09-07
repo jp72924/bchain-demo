@@ -75,3 +75,23 @@ class CScript:
             # Don't attempt to compare against unrelated types
             return NotImplemented
         return self.data == other.data
+
+# --------------------------
+# Helper functions
+# --------------------------
+
+def is_op_return(script_pubkey: CScript) -> bool:
+    """Check if script is an OP_RETURN scriptPubKey."""
+    ops = script_pubkey.ops
+    return (len(ops) >= 1 and
+            ops[0] == OP_RETURN and
+            all(isinstance(op, bytes) for op in ops[1:]))  # All subsequent ops should be data pushes
+
+
+def is_p2sh(script_pubkey: CScript) -> bool:
+    """Check if script is a P2SH scriptPubKey."""
+    ops = script_pubkey.ops
+    return (len(ops) == 3 and
+            ops[0] == OP_HASH160 and
+            isinstance(ops[1], bytes) and len(ops[1]) == 20 and
+            ops[2] == OP_EQUAL)

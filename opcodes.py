@@ -129,6 +129,7 @@ OP_PUSHDATA4 = 0x4e  # Push next 4 bytes as length
 # Flow Control and Logic
 # --------------------------
 OP_VERIFY = 0x69
+OP_RETURN = 0x6a
 
 # --------------------------
 # Bitwise and Arithmetic Operations
