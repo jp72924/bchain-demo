@@ -6,6 +6,7 @@ Provides common hashing operations used in Bitcoin and other cryptocurrencies:
 - RIPEMD-160
 - Bitcoin's HASH160 (SHA-256 followed by RIPEMD-160)
 - Bitcoin's HASH256 (double SHA-256)
+- ECDSA signature verification
 """
 
 import hashlib
@@ -77,3 +78,25 @@ def hash256(data: bytes) -> bytes:
         Standard hashing method for Bitcoin transactions and blocks
     """
     return sha256(sha256(data))
+
+
+def verify_ecdsa(pubkey: bytes, sig: bytes, data: bytes) -> bool:
+    """Verify an ECDSA signature using secp256k1.
+
+    Args:
+        pubkey: The public key bytes (33 or 65 bytes)
+        sig: The signature in DER format
+        data: The data that was signed (32-byte hash)
+
+    Returns:
+        bool: True if signature is valid, False otherwise
+
+    Note:
+        This function uses the ecdsa library for verification.
+    """
+    try:
+        from ecdsa import VerifyingKey, SECP256k1
+        vk = VerifyingKey.from_string(pubkey, curve=SECP256k1)
+        return vk.verify(sig, data, hashfunc=hashlib.sha256)
+    except:
+        return False

@@ -140,6 +140,8 @@ OP_EQUALVERIFY = 0x88
 # --------------------------
 # Cryptographic Operations
 # --------------------------
+OP_SHA256 = 0xa8
+OP_HASH160 = 0xa9
+OP_HASH256 = 0xaa
 OP_CHECKSIG = 0xac
 OP_CHECKMULTISIG = 0xae
-OP_HASH160 = 0xa9

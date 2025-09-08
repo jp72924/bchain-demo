@@ -4,6 +4,7 @@ from typing import Union
 from crypto import hash256
 from crypto import ripemd160
 from crypto import sha256
+from crypto import verify_ecdsa
 from opcodes import *
 from script import CScript
 from script import is_p2sh
@@ -43,26 +44,73 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                 if op_count > CScript.MAX_OPS_PER_SCRIPT:
                     raise ScriptExecutionError("OP_COUNT_EXCEEDED")
 
+            # --- Numeric Opcodes (Only if `op` is an integer) ---
+            elif isinstance(op, int) and op == OP_0:
+                stack.append(b'')
+
+            elif isinstance(op, int) and OP_1 <= op <= OP_16:
+                num = op - 0x50  # Translate opcode to number (OP_1=0x51 → 1)
+                stack.append(num.to_bytes(1, 'little', signed=True))
+
+            # --- Data pushes ---
+            elif isinstance(op, bytes):
+                stack.append(op)
+
             # --- Stack Operations ---
             if op == OP_DUP:
                 if not stack:
                     raise ScriptExecutionError("STACK_UNDERFLOW")
                 stack.append(stack[-1])
 
+            # --- Flow Control ---
+            elif op == OP_VERIFY:
+                if not stack:
+                    raise ScriptExecutionError("STACK_UNDERFLOW")
+                if stack.pop() == 0x00:
+                    raise ScriptExecutionError("VERIFY_FAILED")
+
+            elif op == OP_RETURN:
+                # OP_RETURN immediately fails script execution
+                raise ScriptExecutionError("OP_RETURN_ENCOUNTERED")
+
+            elif op == OP_EQUAL:
+                if len(stack) < 2:
+                    raise ScriptExecutionError("STACK_UNDERFLOW")
+                a = stack.pop()
+                b = stack.pop()
+                stack.append(0x01 if a == b else 0x00)
+
+            elif op == OP_EQUALVERIFY:
+                if len(stack) < 2:
+                    raise ScriptExecutionError("STACK_UNDERFLOW")
+                # First, perform OP_EQUAL (compare and push result)
+                a = stack.pop()
+                b = stack.pop()
+                stack.append(0x01 if a == b else 0x00)
+
+                # Then, perform OP_VERIFY (check top value)
+                if stack.pop() == 0x00:
+                    raise ScriptExecutionError("EQUALVERIFY_FAILED")
+
+            # --- Crypto Operations ---
             elif op == OP_HASH160:
                 if not stack:
                     raise ScriptExecutionError("STACK_UNDERFLOW")
                 data = stack.pop()
                 stack.append(ripemd160(sha256(data)))
 
-            # --- Numeric Opcodes (Only if `op` is an integer) ---
-            elif isinstance(op, int) and op == OP_0:
-                stack.append(b'')
-            elif isinstance(op, int) and OP_1 <= op <= OP_16:
-                num = op - 0x50  # Translate opcode to number (OP_1=0x51 → 1)
-                stack.append(num.to_bytes(1, 'little', signed=True))
+            elif op == OP_SHA256:
+                if not stack:
+                    raise ScriptExecutionError("STACK_UNDERFLOW")
+                data = stack.pop()
+                stack.append(sha256(data))
 
-            # --- Crypto Operations ---
+            elif op == OP_HASH256:
+                if not stack:
+                    raise ScriptExecutionError("STACK_UNDERFLOW")
+                data = stack.pop()
+                stack.append(hash256(data))
+
             elif op == OP_CHECKSIG:
                 if len(stack) < 2:
                     raise ScriptExecutionError("STACK_UNDERFLOW")
@@ -82,8 +130,8 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                 except ValueError:
                     stack.append(0x00)
                     continue
-                
-                if not verify_signature(pubkey, der_sig, sighash):
+
+                if not verify_ecdsa(pubkey, der_sig, sighash):
                     stack.append(0x00)
                 else:
                     stack.append(0x01)
@@ -124,16 +172,16 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                 for sig in sigs:
                     if not sig:
                         continue  # Skip empty sig
-                        
+
                     # Extract SIGHASH type
                     sighash_type = sig[-1]
                     der_sig = sig[:-1]
-                    
+
                     # Find matching pubkey
                     for i in reversed(range(len(pubkeys_remaining))):
                         try:
                             sighash = signature_hash(tx, input_index, script_pubkey, sighash_type)
-                            if verify_signature(pubkeys_remaining[i], der_sig, sighash):
+                            if verify_ecdsa(pubkeys_remaining[i], der_sig, sighash):
                                 valid_sigs += 1
                                 del pubkeys_remaining[i]  # Prevent reuse
                                 break
@@ -141,40 +189,6 @@ def eval_script(ops: List[Union[int, bytes]], stack: List[bytes], tx: CTransacti
                             continue
 
                 stack.append(0x01 if valid_sigs >= m else 0x00)
-
-            # --- Flow Control ---
-            elif op == OP_EQUAL:
-                if len(stack) < 2:
-                    raise ScriptExecutionError("STACK_UNDERFLOW")
-                a = stack.pop()
-                b = stack.pop()
-                stack.append(0x01 if a == b else 0x00)
-
-            elif op == OP_VERIFY:
-                if not stack:
-                    raise ScriptExecutionError("STACK_UNDERFLOW")
-                if stack.pop() == 0x00:
-                    raise ScriptExecutionError("VERIFY_FAILED")
-
-            elif op == OP_RETURN:
-                # OP_RETURN immediately fails script execution
-                raise ScriptExecutionError("OP_RETURN_ENCOUNTERED")
-
-            elif op == OP_EQUALVERIFY:
-                if len(stack) < 2:
-                    raise ScriptExecutionError("STACK_UNDERFLOW")
-                # First, perform OP_EQUAL (compare and push result)
-                a = stack.pop()
-                b = stack.pop()
-                stack.append(0x01 if a == b else 0x00)
-                
-                # Then, perform OP_VERIFY (check top value)
-                if stack.pop() == 0x00:
-                    raise ScriptExecutionError("EQUALVERIFY_FAILED")
-
-            # --- Data pushes ---
-            elif isinstance(op, bytes):
-                stack.append(op)
 
             # Stack size check
             if len(stack) > CScript.MAX_STACK_SIZE:
@@ -191,7 +205,7 @@ def verify_script(script_sig: CScript, script_pubkey: CScript, tx: CTransaction,
     """
 
     # Check script sizes
-    if (len(script_sig.data) > CScript.MAX_SCRIPT_SIZE or 
+    if (len(script_sig.data) > CScript.MAX_SCRIPT_SIZE or
         len(script_pubkey.data) > CScript.MAX_SCRIPT_SIZE):
         return False
 
@@ -208,21 +222,21 @@ def verify_script(script_sig: CScript, script_pubkey: CScript, tx: CTransaction,
         redeem_script_bytes = stack[-1]
         redeem_script = CScript(redeem_script_bytes)
         stack_before_p2sh = stack.copy()
-        
+
         # Execute scriptPubKey (consumes redeem_script)
         if not eval_script(script_pubkey.ops, stack, tx, input_index, script_pubkey):
             return False
-        
+
         # Check hash validation result
         if not stack or stack[-1] == b'\x00':
             return False
         stack.pop()  # Remove OP_EQUAL result
-        
+
         # Execute redeemScript with remaining stack elements
         redeem_stack = stack_before_p2sh[:-1]  # Exclude redeem_script
         if not eval_script(redeem_script.ops, redeem_stack, tx, input_index, redeem_script):
             return False
-        
+
         return bool(redeem_stack) and redeem_stack[-1] != b'\x00'
     else:
         # Standard script execution
@@ -241,22 +255,22 @@ def signature_hash(tx: CTransaction, input_index: int, script_pubkey: CScript, s
     # Validate input index
     if input_index < 0 or input_index >= len(tx.vin):
         raise ValueError("Invalid input index")
-    
+
     # Extract SIGHASH flags
     sighash_anyonecanpay = (sighash_type & SIGHASH_ANYONECANPAY) != 0
     base_type = sighash_type & 0x1f  # Mask off ANYONECANPAY bit
-    
+
     # Prepare inputs
     if sighash_anyonecanpay:
-        vin = [CTxIn(prevout=tx.vin[input_index].prevout, scriptSig=CScript(b""), 
+        vin = [CTxIn(prevout=tx.vin[input_index].prevout, scriptSig=CScript(b""),
                     nSequence=tx.vin[input_index].nSequence)]
     else:
         vin = [CTxIn(txin.prevout, CScript(b""), txin.nSequence) for txin in tx.vin]
-    
+
     # Restore scriptSig for current input
     if input_index < len(vin):
         vin[input_index].scriptSig = script_pubkey
-    
+
     # Prepare outputs
     if base_type == SIGHASH_ALL:
         vout = tx.vout.copy()
@@ -276,17 +290,8 @@ def signature_hash(tx: CTransaction, input_index: int, script_pubkey: CScript, s
                     vin[i].nSequence = 0
     else:
         raise ValueError(f"Unsupported SIGHASH type: {base_type}")
-    
+
     # Build modified transaction
     tx_copy = CTransaction(vin=vin, vout=vout, nLockTime=tx.nLockTime)
     preimage = tx_copy.serialize() + sighash_type.to_bytes(4, 'little')
     return hash256(preimage)
-
-# Simplified ECDSA verification (use proper crypto library in real implementation)
-def verify_signature(pubkey: bytes, sig: bytes, sighash: bytes) -> bool:    
-    try:
-        from ecdsa import VerifyingKey, SECP256k1
-        vk = VerifyingKey.from_string(pubkey, curve=SECP256k1)
-        return vk.verify(sig, sighash, hashfunc=hashlib.sha256)
-    except:
-        return False
