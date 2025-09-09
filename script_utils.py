@@ -65,9 +65,17 @@ class ScriptBuilder:
         return CScript(script)
 
     @classmethod
-    def p2sh_script_pubkey(cls, redeem_script: CScript) -> CScript:
+    def p2sh_script_pubkey(cls, script_or_hash: Union[CScript, bytes], is_hash: bool = False) -> CScript:
         """Build Pay-to-Script-Hash (P2SH) script"""
-        script_hash = hash160(redeem_script.data)
+        if is_hash:
+            if not isinstance(script_or_hash, bytes) or len(script_or_hash) != 20:
+                raise ValueError("P2SH requires 20-byte")
+            script_hash = script_or_hash
+        else:
+            if not isinstance(script_or_hash, CScript):
+                raise ValueError("P2SH requires CScript")
+            script_hash = hash160(script_or_hash.data)
+
         return CScript(
             bytes([OP_HASH160]) +
             cls._push_data(script_hash) +

@@ -9,11 +9,42 @@ from typing import Dict, Callable, Any, Optional
 from urllib.parse import urlparse, parse_qs
 import threading
 
+from crypto import hash160
 from chainstate import ChainState
+from script_utils import ScriptBuilder
+
+try:
+    import base58
+except ImportError:
+    print("Please install the base58 library: pip install base58")
+    exit()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("JSON-RPC")
+
+# --------------------------
+# Helper functions
+# --------------------------
+
+def address_to_script(address: str) -> 'CScript':
+    """
+    Convert a Bitcoin address to its scriptPubKey representation.
+    This would need to handle different address types (P2PKH, P2SH, etc.)
+    """
+    if address.startswith('1'):  # P2PKH address
+        # Decode base58, extract hash, create P2PKH script
+        decoded = base58.b58decode(address)
+        pubkey_hash = decoded[1:-4]  # Remove version and checksum
+        return ScriptBuilder.p2pkh_script_pubkey(pubkey_hash, is_hash=True)
+    elif address.startswith('3'):  # P2SH address
+        # Similar process for P2SH
+        decoded = base58.b58decode(address)
+        script_hash = decoded[1:-4]
+        return ScriptBuilder.p2sh_script_pubkey(script_hash)
+    else:
+        raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS,
+                          f"Invalid address format: {address}")
 
 
 class JSONRPCError(Exception):
@@ -205,7 +236,7 @@ class JSONRPCServer:
             'chain': 'main',
             'blocks': chain.tip.height if chain.tip else 0,
             'headers': chain.tip.height if chain.tip else 0,
-            'bestblockhash': chain.tip.hash.hex() if chain.tip else '0' * 64,
+            'bestblockhash': chain.tip.hash.hex() if chain.tip else bytes(32),
             'difficulty': float(chain.tip.header.nBits) if chain.tip else 1.0,
             'mediantime': chain.tip.get_median_time_past() if chain.tip else 0,
             'verificationprogress': 1.0,  # Simplified
@@ -246,15 +277,20 @@ class JSONRPCServer:
             'warnings': ''
         }
 
-    def get_balance(self, dummy: str = "*", minconf: int = 1) -> float:
-        """Return the total wallet balance"""
+    def get_balance(self, address: str = "*", minconf: int = 1) -> float:
+        """Return the balance for a specific address"""
         if not self.chain_state:
             raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR,
                               "Chain state not available")
 
-        # For now, return total chain balance
-        # In a real implementation, this would filter by wallet addresses
-        total_satoshis = self.chain_state.utxo_set.get_balance()
+        if address == "*":
+            # Return total balance (current behavior)
+            total_satoshis = self.chain_state.utxo_set.get_balance()
+        else:
+            # Convert address to scriptPubKey and get filtered balance
+            script_pubkey = address_to_script(address)
+            total_satoshis = self.chain_state.utxo_set.get_balance(script_pubkey)
+
         return total_satoshis / 100_000_000  # Convert to BTC
 
     def get_block_count(self) -> int:

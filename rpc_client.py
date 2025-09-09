@@ -32,22 +32,29 @@ class BitcoinRPCClient:
     def getnetworkinfo(self):
         return self.call('getnetworkinfo')
     
-    def getbalance(self):
-        return self.call('getbalance', ['*', 1])
-    
+    def getbalance(self, address='*', minconf=1):
+        return self.call('getbalance', [address, minconf])
+
     def getblockcount(self):
         return self.call('getblockcount')
-    
+
     def stop(self):
         return self.call('stop')
 
 
 if __name__ == "__main__":
     # Test the RPC interface
-    client = BitcoinRPCClient('127.0.0.1', 8332)
-    
+    client = BitcoinRPCClient('127.0.0.1', 8332)  # Adjust host and port as needed
+
     print("Testing RPC methods:")
     print("Blockchain Info:", client.getblockchaininfo())
     print("Network Info:", client.getnetworkinfo())
-    print("Balance:", client.getbalance())
+
+    # Get total balance (all addresses)
+    print("Total Balance:", client.getbalance())
+
+    # Get balance for a specific address
+    specific_address = "1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn"  # Example address
+    print(f"Balance for {specific_address}:", client.getbalance(specific_address))
+
     print("Block Count:", client.getblockcount())
