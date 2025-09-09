@@ -13,6 +13,7 @@ from transaction import CTransaction
 
 # Network components
 from node import PeerNode
+from rpc_server import start_rpc_server
 
 # Operations
 from block_validator import validate_block
@@ -280,6 +281,9 @@ if __name__ == "__main__":
         node_id="NODE-A"
     )
 
+    # Start RPC server for miner node
+    rpc_server = start_rpc_server(shared_state, miner_node, '127.0.0.1', 8332)
+
     time.sleep(5)
 
     miner = Miner(shared_state, pubkey1)
@@ -298,8 +302,17 @@ if __name__ == "__main__":
         node_id="NODE-B"
     )
 
-    # Keep nodes running
-    while True:
-        time.sleep(5)
-        isolated_state.chain.print_main_chain()
+    # Start RPC server for regular node on different port
+    regular_rpc_server = start_rpc_server(isolated_state, regular_node, '127.0.0.1', 8331)
 
+    # Keep nodes running
+    try:
+        while True:
+            time.sleep(5)
+            # isolated_state.chain.print_main_chain()
+    except KeyboardInterrupt:
+        print("Shutting down nodes...")
+        miner_node.shutdown()
+        regular_node.shutdown()
+        rpc_server.stop()
+        regular_rpc_server.stop()
