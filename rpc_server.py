@@ -5,13 +5,18 @@ Provides external control and querying capabilities.
 import json
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, Callable, Any, Optional
+from typing import List, Dict, Callable, Any, Optional
 from urllib.parse import urlparse, parse_qs
 import threading
+import time
 
+from bignum import set_compact
+from block import CBlock
 from crypto import hash160
 from chainstate import ChainState
+from script import CScript
 from script_utils import ScriptBuilder
+from transaction import COutPoint, CTransaction, CTxIn, CTxOut
 
 try:
     import base58
@@ -175,10 +180,18 @@ class JSONRPCServer:
         self.register_method('getblockcount', self.get_block_count)
         self.register_method('getbestblockhash', self.get_best_block_hash)
         self.register_method('stop', self.stop)
-        # Placeholder for future methods:
-        # self.register_method('sendtoaddress', self.send_to_address)
-        # self.register_method('getnewaddress', self.get_new_address)
-        # self.register_method('listtransactions', self.list_transactions)
+
+        # New methods to implement
+        self.register_method('getblockhash', self.get_block_hash)
+        self.register_method('getblock', self.get_block)
+        self.register_method('getrawtransaction', self.get_raw_transaction)
+        self.register_method('sendrawtransaction', self.send_raw_transaction)
+        self.register_method('listunspent', self.list_unspent)
+        self.register_method('validateaddress', self.validate_address)
+        self.register_method('getmempoolinfo', self.get_mempool_info)
+        self.register_method('gettxout', self.get_tx_out)
+        self.register_method('createrawtransaction', self.create_raw_transaction)
+        self.register_method('signrawtransactionwithkey', self.sign_raw_transaction_with_key)
 
     def register_method(self, name: str, method: Callable):
         """Register a new RPC method"""
@@ -304,6 +317,270 @@ class JSONRPCServer:
         if not self.chain_state or not self.chain_state.chain.tip:
             return '0' * 64
         return self.chain_state.chain.tip.hash.hex()
+
+    # --- New RPC Method Implementations ---
+
+    def get_block_hash(self, height: int) -> str:
+        """Returns hash of block in best-block-chain at height provided."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        if height < 0:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Block height out of range")
+
+        # Traverse the chain to find block at specified height
+        current = self.chain_state.chain.tip
+        while current and current.height > height:
+            current = current.pprev
+
+        if current and current.height == height:
+            return current.hash.hex()
+        else:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Block height out of range")
+
+    def get_block(self, block_hash: str, verbose: bool = True) -> dict:
+        """Returns information about a block."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        try:
+            hash_bytes = bytes.fromhex(block_hash)
+            block_index = self.chain_state.chain.block_map.get(hash_bytes)
+            if not block_index:
+                raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Block not found")
+
+            if verbose:
+                return {
+                    'hash': block_index.hash.hex(),
+                    'confirmations': self.chain_state.chain.tip.height - block_index.height + 1,
+                    'height': block_index.height,
+                    'version': block_index.header.nVersion,
+                    'merkleroot': block_index.header.hashMerkleRoot.hex(),
+                    'time': block_index.header.nTime,
+                    'mediantime': block_index.get_median_time_past(),
+                    'nonce': block_index.header.nNonce,
+                    'bits': hex(block_index.header.nBits),
+                    'difficulty': float(set_compact(block_index.header.nBits)),
+                    'previousblockhash': block_index.header.hashPrevBlock.hex(),
+                    'nextblockhash': block_index.pnext.hash.hex() if block_index.pnext else None,
+                    'nTx': len(block_index.header.vtx),
+                    'tx': [tx.get_hash().hex() for tx in block_index.header.vtx]
+                }
+            else:
+                return block_index.header.serialize().hex()
+
+        except ValueError:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Invalid block hash")
+
+    def get_raw_transaction(self, txid: str, verbose: bool = False) -> dict:
+        """Returns raw transaction data."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        try:
+            tx_hash = bytes.fromhex(txid)
+
+            # Check mempool first
+            tx = self.chain_state.mempool.get(tx_hash)
+            if tx:
+                if verbose:
+                    return self._tx_to_dict(tx, None)
+                else:
+                    return tx.serialize().hex()
+
+            # Check blockchain transactions
+            for block_index in self.chain_state.chain.block_map.values():
+                for block_tx in block_index.header.vtx:
+                    if block_tx.get_hash() == tx_hash:
+                        if verbose:
+                            return self._tx_to_dict(block_tx, block_index.height)
+                        else:
+                            return block_tx.serialize().hex()
+
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Transaction not found")
+
+        except ValueError:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Invalid transaction hash")
+
+    def _tx_to_dict(self, tx: CTransaction, block_height: int = None) -> dict:
+        """Convert transaction to dictionary format for verbose response"""
+        return {
+            'txid': tx.get_hash().hex(),
+            'hash': tx.get_hash().hex(),
+            'version': tx.nVersion,
+            'size': len(tx.serialize()),
+            'locktime': tx.nLockTime,
+            'vin': [{
+                'txid': vin.prevout.hash.hex(),
+                'vout': vin.prevout.n,
+                'scriptSig': {
+                    'asm': '',  # Would need script decompiler
+                    'hex': vin.scriptSig.data.hex()
+                },
+                'sequence': vin.nSequence
+            } for vin in tx.vin],
+            'vout': [{
+                'value': vout.nValue / 100_000_000,  # Convert to BTC
+                'n': i,
+                'scriptPubKey': {
+                    'asm': '',  # Would need script decompiler
+                    'hex': vout.scriptPubKey.data.hex()
+                }
+            } for i, vout in enumerate(tx.vout)],
+            'blockhash': None,  # Would need to find containing block
+            'confirmations': self.chain_state.chain.tip.height - block_height + 1 if block_height else 0,
+            'time': 0,  # Would need block time
+            'blocktime': 0  # Would need block time
+        }
+
+    def send_raw_transaction(self, hexstring: str) -> str:
+        """Submits raw transaction to local node and network."""
+        if not self.chain_state or not self.node:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Node not available")
+
+        try:
+            tx_data = bytes.fromhex(hexstring)
+            tx = CTransaction.deserialize(tx_data)
+
+            # Validate transaction
+            from tx_validator import validate_transaction
+            if validate_transaction(tx, self.chain_state.utxo_set, self.chain_state.chain.tip.height):
+                # Add to mempool
+                txid = tx.get_hash()
+                self.chain_state.mempool[txid] = tx
+
+                # Broadcast to network
+                self.node.send_message({
+                    'type': 'TX',
+                    'tx': hexstring
+                })
+
+                return txid.hex()
+            else:
+                raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Transaction validation failed")
+
+        except Exception as e:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Invalid transaction: {str(e)}")
+
+    def list_unspent(self, minconf: int = 1, maxconf: int = 9999999, addresses: List[str] = None) -> List[dict]:
+        """Returns array of unspent transaction outputs."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        current_height = self.chain_state.chain.tip.height
+        unspent = []
+
+        for prevout, utxo in self.chain_state.utxo_set.utxos.items():
+            confirmations = current_height - utxo.height + 1
+            if minconf <= confirmations <= maxconf:
+                if addresses:
+                    # Filter by addresses (would need address-to-script conversion)
+                    pass  # Implementation needed
+                else:
+                    unspent.append({
+                        'txid': prevout.hash.hex(),
+                        'vout': prevout.n,
+                        'address': '',  # Would need script-to-address conversion
+                        'scriptPubKey': utxo.tx_out.scriptPubKey.data.hex(),
+                        'amount': utxo.tx_out.nValue / 100_000_000,
+                        'confirmations': confirmations,
+                        'spendable': True,
+                        'solvable': True,
+                        'safe': True
+                    })
+
+        return unspent
+
+    def validate_address(self, address: str) -> dict:
+        """Return information about the given bitcoin address."""
+        # Basic validation - would need proper address decoding
+        is_valid = len(address) >= 26 and len(address) <= 35
+        return {
+            'isvalid': is_valid,
+            'address': address if is_valid else '',
+            'scriptPubKey': '',
+            'isscript': False,
+            'iswitness': False
+        }
+
+    def get_mempool_info(self) -> dict:
+        """Returns details on the active state of the TX memory pool."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        return {
+            'size': len(self.chain_state.mempool),
+            'bytes': sum(len(tx.serialize()) for tx in self.chain_state.mempool.values()),
+            'usage': 0,  # Would need actual memory usage tracking
+            'maxmempool': 300000000,  # Default value
+            'mempoolminfee': 0.00001000,
+            'minrelaytxfee': 0.00001000
+        }
+
+    def get_tx_out(self, txid: str, n: int, include_mempool: bool = True) -> dict:
+        """Returns details about an unspent transaction output."""
+        if not self.chain_state:
+            raise JSONRPCError(JSONRPCRequestHandler.INTERNAL_ERROR, "Chain state not available")
+
+        try:
+            tx_hash = bytes.fromhex(txid)
+            prevout = COutPoint(tx_hash, n)
+
+            if self.chain_state.utxo_set.is_unspent(prevout):
+                utxo = self.chain_state.utxo_set.utxos[prevout]
+                current_height = self.chain_state.chain.tip.height
+
+                return {
+                    'bestblock': self.chain_state.chain.tip.hash.hex(),
+                    'confirmations': current_height - utxo.height + 1,
+                    'value': utxo.tx_out.nValue / 100_000_000,
+                    'scriptPubKey': {
+                        'asm': '',  # Would need script decompiler
+                        'hex': utxo.tx_out.scriptPubKey.data.hex()
+                    },
+                    'coinbase': utxo.coinbase,
+                    'height': utxo.height
+                }
+            else:
+                return None
+
+        except ValueError:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, "Invalid parameters")
+
+    def create_raw_transaction(self, inputs: List[dict], outputs: dict, locktime: int = 0) -> str:
+        """Create a transaction spending the given inputs and creating new outputs."""
+        try:
+            vin = []
+            for input in inputs:
+                txid = bytes.fromhex(input['txid'])
+                prevout = COutPoint(txid, input['vout'])
+                # Create a basic scriptSig (would need proper signing)
+                scriptSig = CScript(b'')
+                vin.append(CTxIn(prevout, scriptSig))
+
+            vout = []
+            for address, amount in outputs.items():
+                # Convert amount to satoshis
+                nValue = int(amount * 100_000_000)
+                # Create scriptPubKey from address (would need address decoding)
+                scriptPubKey = CScript(b'')  # Placeholder
+                vout.append(CTxOut(nValue, scriptPubKey))
+
+            tx = CTransaction(vin=vin, vout=vout, nLockTime=locktime)
+            return tx.serialize().hex()
+
+        except Exception as e:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Invalid parameters: {str(e)}")
+
+    def sign_raw_transaction_with_key(self, hexstring: str, privkeys: List[str], prevtxs: List[dict] = None) -> dict:
+        """Sign inputs for raw transaction."""
+        # This is a complex method that would require proper cryptographic signing
+        # For now, return a placeholder implementation
+        return {
+            'hex': hexstring,  # Would be the signed transaction
+            'complete': False,
+            'errors': ['Signing not implemented']
+        }
 
 
 def start_rpc_server(chain_state: ChainState, node: 'BlockchainNode',
