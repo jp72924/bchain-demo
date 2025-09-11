@@ -1,15 +1,48 @@
----------------- Wallet 1 ----------------
+============================================================
+                         WALLET 1
+============================================================
 
-Private Key (hex): 93b4e468821ac20a05df4404f4b401c46f0e18f3dc819f134bd39d003641387c
-Public Key (hex): 02d8fdf598efc46d1dc0ca8582dc29b3bd28060fc27954a98851db62c55d6b48c5
+1. PRIVATE KEY (32 bytes, 256 bits):
+   Hex: 93b4e468 821ac20a 05df4404 f4b401c4 6f0e18f3 dc819f13 4bd39d00 3641387c
 
-Private Key (WIF): 5JwLYmprzAVrRZNSMe5NfSNR1jdgSbhJ3Cfog9oA3YaX5VRbe5Y
-Bitcoin Address: 1LjSwS2r46eQuWsgV1zUKV4vXAJvG9BgRd
+2. WALLET IMPORT FORMAT (WIF):
+   Compressed WIF (52 chars): L2AqHErFdJvM9Pscv6eJceyWzFAu5z8rCiWH1opivENwkdKssUUa
+   Uncompressed WIF (51 chars): 5JwLYmprzAVrRZNSMe5NfSNR1jdgSbhJ3Cfog9oA3YaX5VRbe5Y
+   Note: The compressed WIF has a '01' suffix before encoding,
+   which signals that derived public keys should be compressed.
 
----------------- Wallet 2 ----------------
+3. PUBLIC KEYS:
+   Compressed (33 bytes): 02d8fdf5 98efc46d 1dc0ca85 82dc29b3 bd28060f c27954a9 8851db62 c55d6b48 c5
+   Uncompressed (65 bytes): 04d8fdf5 98efc46d 1dc0ca85 82dc29b3 bd28060f c27954a9 8851db62 c55d6b48 c5f4910a e91166dd 6130b7f9 c49b21be 8837b30b 9389454d 151c4c67 5c310117 84
+   Note: Compressed public keys use prefix 02/03 instead of 04,
+   and only include the X coordinate + parity of Y.
 
-Private Key (hex): 6e3a9c356b3519a1dcd01e54c4c74bcb5fc84eda927b28b96748553dbf169054
-Public Key (hex): 026e21e332324f8634ef47584ef130dd97828e2f626a5f2d7d7a1a33e32a26ac20
+4. BITCOIN ADDRESSES:
+   From compressed public key: 1LjSwS2r46eQuWsgV1zUKV4vXAJvG9BgRd
+   From uncompressed public key: 13DVsFpnpdiwmk6SXqMZy1XdPMAuVWVwBn
+   Note: These are different addresses! Funds sent to one
 
-Private Key (WIF): 5JeqEQgLd42nWXaoJDDeyG1zhXoLxRkAstz8ZfU81CkhvtUfneJ
-Bitcoin Address: 1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn
+============================================================
+                         WALLET 2
+============================================================
+
+1. PRIVATE KEY (32 bytes, 256 bits):
+   Hex: 6e3a9c35 6b3519a1 dcd01e54 c4c74bcb 5fc84eda 927b28b9 6748553d bf169054
+
+2. WALLET IMPORT FORMAT (WIF):
+   Compressed WIF (52 chars): KzuytBWdc8NssKzBLxvrbKHPftwZ5eDYbeTAPAnhutsueWsqYZHy
+   Uncompressed WIF (51 chars): 5JeqEQgLd42nWXaoJDDeyG1zhXoLxRkAstz8ZfU81CkhvtUfneJ
+   Note: The compressed WIF has a '01' suffix before encoding,
+   which signals that derived public keys should be compressed.
+
+3. PUBLIC KEYS:
+   Compressed (33 bytes): 026e21e3 32324f86 34ef4758 4ef130dd 97828e2f 626a5f2d 7d7a1a33 e32a26ac 20
+   Uncompressed (65 bytes): 046e21e3 32324f86 34ef4758 4ef130dd 97828e2f 626a5f2d 7d7a1a33 e32a26ac 20624417 695007eb 1252b659 e415ea2a e6d3e0f6 a8a29e89 104aec1e 693cb91e 56
+   Note: Compressed public keys use prefix 02/03 instead of 04,
+   and only include the X coordinate + parity of Y.
+
+4. BITCOIN ADDRESSES:
+   From compressed public key: 1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn
+   From uncompressed public key: 19oKo5EZybq6KEbThgBJe8TKRbo8ECo3Ng
+   Note: These are different addresses! Funds sent to one
+   cannot be accessed from the other, despite same private key.
