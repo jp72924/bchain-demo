@@ -86,11 +86,15 @@ class BitcoinRPCClient:
         """Create raw transaction"""
         return self.call('createrawtransaction', [inputs, outputs, locktime])
 
-    def signrawtransactionwithkey(self, hexstring: str, privkeys: List[str], prevtxs: List[Dict] = None):
+    def signrawtransactionwithkey(self, hexstring: str, privkeys: List[str], prevtxs: List[Dict] = None, sighashtype: str = "ALL"):
         """Sign raw transaction with private keys"""
         params = [hexstring, privkeys]
         if prevtxs:
             params.append(prevtxs)
+            params.append(sighashtype)
+        elif sighashtype != "ALL":
+            params.append([])
+            params.append(sighashtype)
         return self.call('signrawtransactionwithkey', params)
 
 
@@ -181,14 +185,45 @@ def main():
     except Exception as e:
         print(f"   Raw transaction creation failed: {e}\n")
 
-    # 11. Sign raw transaction (example - will fail without proper implementation)
+    # 11. Sign raw transaction (proper test)
     print("11. Sign Raw Transaction:")
     try:
-        # This will fail since signing isn't fully implemented
-        signing_result = client.signrawtransactionwithkey("rawtxhex", ["privatekey"])
-        print(f"   Signing complete: {signing_result['result']['complete']}\n")
+        # Create a proper raw transaction first
+        unspent = client.listunspent()
+        if unspent['result']:
+            utxo = unspent['result'][0]
+
+            # Create raw transaction spending this UTXO
+            inputs = [{
+                "txid": utxo['txid'],
+                "vout": utxo['vout']
+            }]
+
+            outputs = {
+                "1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn": utxo['amount'] - 0.0001  # minus fee
+            }
+
+            raw_tx = client.createrawtransaction(inputs, outputs)
+
+            # Sign with test private key (would need actual key in real scenario)
+            signing_result = client.signrawtransactionwithkey(
+                raw_tx['result'],
+                ["L2AqHErFdJvM9Pscv6eJceyWzFAu5z8rCiWH1opivENwkdKssUUa"],  # Example WIF
+                [{
+                    "txid": utxo['txid'],
+                    "vout": utxo['vout'],
+                    "scriptPubKey": utxo['scriptPubKey'],
+                    "value": utxo['amount']
+                }]
+            )
+            print(f"   Signing complete: {signing_result['result']['complete']}")
+            if signing_result['result']['errors']:
+                print(f"   Errors: {signing_result['result']['errors']}")
+
     except Exception as e:
-        print("   Signing not fully implemented (expected)\n")
+        print(f"   Signing failed: {e}")
+    finally:
+        print()
 
     # 12. Best block hash
     print("12. Best Block:")

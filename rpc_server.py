@@ -18,6 +18,12 @@ from script import CScript
 from script_utils import ScriptBuilder
 from transaction import COutPoint, CTransaction, CTxIn, CTxOut
 
+# rpc_server.py - Add these imports at the top
+from crypto import sign_ecdsa, private_key_to_public_key, wif_to_private_key, hash160
+from script_utils import ScriptBuilder
+from interpreter import signature_hash
+from opcodes import OP_DUP, OP_HASH160, OP_CHECKSIG, SIGHASH_ALL, SIGHASH_NONE, SIGHASH_SINGLE, SIGHASH_ANYONECANPAY
+
 try:
     import base58
 except ImportError:
@@ -247,7 +253,7 @@ class JSONRPCServer:
         chain = self.chain_state.chain
         return {
             'chain': 'main',
-            'blocks': chain.tip.height if chain.tip else 0,
+            'blocks': (chain.tip.height + 1) if chain.tip else 0,
             'headers': chain.tip.height if chain.tip else 0,
             'bestblockhash': chain.tip.hash.hex() if chain.tip else bytes(32),
             'difficulty': float(chain.tip.header.nBits) if chain.tip else 1.0,
@@ -572,15 +578,176 @@ class JSONRPCServer:
         except Exception as e:
             raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Invalid parameters: {str(e)}")
 
-    def sign_raw_transaction_with_key(self, hexstring: str, privkeys: List[str], prevtxs: List[dict] = None) -> dict:
-        """Sign inputs for raw transaction."""
-        # This is a complex method that would require proper cryptographic signing
-        # For now, return a placeholder implementation
-        return {
-            'hex': hexstring,  # Would be the signed transaction
-            'complete': False,
-            'errors': ['Signing not implemented']
-        }
+    def sign_raw_transaction_with_key(self, hexstring: str, privkeys: List[str],
+                                    prevtxs: List[dict] = None, sighashtype: str = "ALL") -> dict:
+        """Sign inputs for raw transaction using provided private keys."""
+        try:
+            # Deserialize the transaction
+            tx_data = bytes.fromhex(hexstring)
+            tx = CTransaction.deserialize(tx_data)
+
+            # Convert SIGHASH type
+            sighash_type_map = {
+                "ALL": SIGHASH_ALL,
+                "NONE": SIGHASH_NONE,
+                "SINGLE": SIGHASH_SINGLE,
+                "ALL|ANYONECANPAY": SIGHASH_ALL | SIGHASH_ANYONECANPAY,
+                "NONE|ANYONECANPAY": SIGHASH_NONE | SIGHASH_ANYONECANPAY,
+                "SINGLE|ANYONECANPAY": SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+            }
+
+            sighash_flag = sighash_type_map.get(sighashtype.upper(), SIGHASH_ALL)
+
+            # Parse private keys
+            signing_keys = []
+            wif_prefixes = {'5', '9', 'K', 'L', 'c'}  # Set for O(1) lookups
+
+            for privkey_str in privkeys:
+                try:
+                    if len(privkey_str) == 64:
+                        # Raw hex private key
+                        privkey_bytes = bytes.fromhex(privkey_str)
+                        pubkey = private_key_to_public_key(privkey_bytes, True)  # Assume compressed
+                        pubkey_hash = hash160(pubkey)
+                    elif privkey_str[0] in wif_prefixes and len(privkey_str) in (51, 52):
+                        # WIF format
+                        privkey_bytes, is_compressed, is_testnet = wif_to_private_key(privkey_str)
+                        pubkey = private_key_to_public_key(privkey_bytes, is_compressed)
+                        pubkey_hash = hash160(pubkey)
+                    else:
+                        raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Invalid private key length: {len(privkey_str)}")
+
+                    signing_keys.append({
+                        'private_key': privkey_bytes,
+                        'public_key': pubkey,
+                        'pubkey_hash': pubkey_hash
+                    })
+                except Exception as e:
+                    raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Invalid private key format: {privkey_str}")
+
+            # Prepare previous transactions data
+            prev_tx_map = {}
+            if prevtxs:
+                for prevtx in prevtxs:
+                    if 'txid' in prevtx and 'vout' in prevtx:
+                        txid = bytes.fromhex(prevtx['txid'])
+                        prev_tx_map[(txid, prevtx['vout'])] = prevtx
+
+            # Sign each input
+            signed_inputs = []
+            errors = []
+
+            for i, txin in enumerate(tx.vin):
+                try:
+                    # Find the UTXO or use provided prevtx data
+                    prevout = txin.prevout
+                    utxo_info = None
+
+                    # Check if we have provided previous transaction data
+                    prevtx_key = (prevout.hash, prevout.n)
+                    if prevtx_key in prev_tx_map:
+                        utxo_info = prev_tx_map[prevtx_key]
+                    else:
+                        # Try to find in UTXO set
+                        if self.chain_state and prevout in self.chain_state.utxo_set.utxos:
+                            utxo = self.chain_state.utxo_set.utxos[prevout]
+                            utxo_info = {
+                                'scriptPubKey': utxo.tx_out.scriptPubKey.data.hex(),
+                                'value': utxo.tx_out.nValue / 100_000_000  # Convert to BTC
+                            }
+
+                    if not utxo_info:
+                        errors.append({
+                            'txid': prevout.hash.hex(),
+                            'vout': prevout.n,
+                            'error': 'Previous output not found'
+                        })
+                        continue
+
+                    # Get the scriptPubKey
+                    if 'scriptPubKey' in utxo_info:
+                        script_pubkey_hex = utxo_info['scriptPubKey']
+                        script_pubkey = CScript(bytes.fromhex(script_pubkey_hex))
+                    else:
+                        errors.append({
+                            'txid': prevout.hash.hex(),
+                            'vout': prevout.n,
+                            'error': 'No scriptPubKey provided'
+                        })
+                        continue
+
+                    # Calculate signature hash
+                    sighash = signature_hash(tx, i, script_pubkey, sighash_flag)
+
+                    # Try to find matching private key
+                    matched_key = None
+                    for key_info in signing_keys:
+                        # For P2PKH, check if pubkey hash matches
+                        if (script_pubkey.ops[0] == OP_DUP and
+                            script_pubkey.ops[1] == OP_HASH160 and
+                            isinstance(script_pubkey.ops[2], bytes) and
+                            script_pubkey.ops[2] == key_info['pubkey_hash']):
+                            matched_key = key_info
+                            break
+
+                    if not matched_key:
+                        errors.append({
+                            'txid': prevout.hash.hex(),
+                            'vout': prevout.n,
+                            'error': 'No matching private key for this input'
+                        })
+                        continue
+
+                    # Sign the hash
+                    signature, _ = sign_ecdsa(matched_key['private_key'], sighash)
+                    signature_with_sighash = signature + bytes([sighash_flag])
+
+                    # Build scriptSig based on script type
+                    if (script_pubkey.ops[0] == OP_DUP and
+                        script_pubkey.ops[1] == OP_HASH160 and
+                        len(script_pubkey.ops) == 5):  # P2PKH
+
+                        script_sig = ScriptBuilder.p2pkh_script_sig(signature_with_sighash, matched_key['public_key'])
+
+                    elif script_pubkey.ops[0] == OP_CHECKSIG:  # P2PK
+                        script_sig = ScriptBuilder.p2pk_script_sig(signature_with_sighash)
+
+                    else:
+                        # For other types, we'd need more complex handling
+                        errors.append({
+                            'txid': prevout.hash.hex(),
+                            'vout': prevout.n,
+                            'error': f'Unsupported script type: {script_pubkey.ops}'
+                        })
+                        continue
+
+                    # Update the transaction input
+                    tx.vin[i].scriptSig = script_sig
+                    signed_inputs.append(i)
+
+                except Exception as e:
+                    errors.append({
+                        'txid': prevout.hash.hex(),
+                        'vout': prevout.n,
+                        'error': f'Signing error: {str(e)}'
+                    })
+                    continue
+
+            # Verify the signed transaction
+            is_complete = len(signed_inputs) == len(tx.vin) and len(errors) == 0
+
+            if not is_complete and len(signed_inputs) > 0:
+                # Partial signing completed
+                pass
+
+            return {
+                'hex': tx.serialize().hex(),
+                'complete': is_complete,
+                'errors': errors if errors else []
+            }
+
+        except Exception as e:
+            raise JSONRPCError(JSONRPCRequestHandler.INVALID_PARAMS, f"Transaction signing failed: {str(e)}")
 
 
 def start_rpc_server(chain_state: ChainState, node: 'BlockchainNode',
