@@ -58,6 +58,58 @@ def address_to_script(address: str) -> 'CScript':
                           f"Invalid address format: {address}")
 
 
+def script_to_address(script_pubkey: CScript) -> str:
+    """Convert scriptPubKey to Bitcoin address string"""
+    try:
+        ops = script_pubkey.ops
+
+        # P2PKH: OP_DUP OP_HASH160 <20-byte hash> OP_EQUALVERIFY OP_CHECKSIG
+        if (len(ops) == 5 and
+            ops[0] == OP_DUP and
+            ops[1] == OP_HASH160 and
+            isinstance(ops[2], bytes) and
+            len(ops[2]) == 20 and
+            ops[3] == OP_EQUALVERIFY and
+            ops[4] == OP_CHECKSIG):
+
+            pubkey_hash = ops[2]
+            # Base58 encoding with version byte 0x00 for mainnet P2PKH
+            payload = b'\x00' + pubkey_hash
+            checksum = hash256(payload)[:4]
+            return base58.b58encode(payload + checksum).decode('ascii')
+
+        # P2SH: OP_HASH160 <20-byte hash> OP_EQUAL
+        elif (len(ops) == 3 and
+              ops[0] == OP_HASH160 and
+              isinstance(ops[1], bytes) and
+              len(ops[1]) == 20 and
+              ops[2] == OP_EQUAL):
+
+            script_hash = ops[1]
+            # Base58 encoding with version byte 0x05 for mainnet P2SH
+            payload = b'\x05' + script_hash
+            checksum = hash256(payload)[:4]
+            return base58.b58encode(payload + checksum).decode('ascii')
+
+        # P2PK (uncommon): <pubkey> OP_CHECKSIG
+        elif (len(ops) == 2 and
+              isinstance(ops[0], bytes) and
+              ops[1] == OP_CHECKSIG):
+
+            pubkey = ops[0]
+            pubkey_hash = hash160(pubkey)
+            # Convert to P2PKH address
+            payload = b'\x00' + pubkey_hash
+            checksum = hash256(payload)[:4]
+            return base58.b58encode(payload + checksum).decode('ascii')
+
+        # Unsupported script type or OP_RETURN
+        return ""
+
+    except Exception:
+        return ""  # Return empty string for unsupported script types
+
+
 class JSONRPCError(Exception):
     """JSON-RPC 2.0 standard error"""
     def __init__(self, code: int, message: str, data: Any = None):
@@ -457,6 +509,7 @@ class JSONRPCServer:
 
                 # Broadcast to network
                 self.node.send_message({
+                    'id': txid.hex(),
                     'type': 'TX',
                     'tx': hexstring
                 })
@@ -476,24 +529,40 @@ class JSONRPCServer:
         current_height = self.chain_state.chain.tip.height
         unspent = []
 
+        # Convert address strings to scriptPubKeys for filtering
+        target_scripts = []
+        if addresses:
+            for address in addresses:
+                try:
+                    script_pubkey = address_to_script(address)
+                    target_scripts.append(script_pubkey)
+                except JSONRPCError:
+                    # Skip invalid addresses but continue processing
+                    continue
+
         for prevout, utxo in self.chain_state.utxo_set.utxos.items():
             confirmations = current_height - utxo.height + 1
             if minconf <= confirmations <= maxconf:
+                # Convert scriptPubKey to address (for response)
+                script_hex = utxo.tx_out.scriptPubKey.data.hex()
+                address = script_to_address(utxo.tx_out.scriptPubKey)
+
+                # Filter by addresses if specified
                 if addresses:
-                    # Filter by addresses (would need address-to-script conversion)
-                    pass  # Implementation needed
-                else:
-                    unspent.append({
-                        'txid': prevout.hash.hex(),
-                        'vout': prevout.n,
-                        'address': '',  # Would need script-to-address conversion
-                        'scriptPubKey': utxo.tx_out.scriptPubKey.data.hex(),
-                        'amount': utxo.tx_out.nValue / 100_000_000,
-                        'confirmations': confirmations,
-                        'spendable': True,
-                        'solvable': True,
-                        'safe': True
-                    })
+                    if utxo.tx_out.scriptPubKey not in target_scripts:
+                        continue
+
+                unspent.append({
+                    'txid': prevout.hash.hex(),
+                    'vout': prevout.n,
+                    'address': address,
+                    'scriptPubKey': script_hex,
+                    'amount': utxo.tx_out.nValue / 100_000_000,
+                    'confirmations': confirmations,
+                    'spendable': True,  # Assuming all UTXOs are spendable
+                    'solvable': True,   # Assuming all UTXOs are solvable
+                    'safe': confirmations > 6  # Consider safe after 6 confirmations
+                })
 
         return unspent
 
@@ -568,8 +637,8 @@ class JSONRPCServer:
             for address, amount in outputs.items():
                 # Convert amount to satoshis
                 nValue = int(amount * 100_000_000)
-                # Create scriptPubKey from address (would need address decoding)
-                scriptPubKey = CScript(b'')  # Placeholder
+                # Create scriptPubKey from address
+                scriptPubKey = address_to_script(address)
                 vout.append(CTxOut(nValue, scriptPubKey))
 
             tx = CTransaction(vin=vin, vout=vout, nLockTime=locktime)
