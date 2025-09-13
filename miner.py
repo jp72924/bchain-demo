@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict
+from typing import List, Dict
 
 from bignum import set_compact
 from bignum import get_compact
@@ -87,16 +87,45 @@ class Miner:
         )
         return tx
 
+    def calculate_fee(self, transactions: List[CTransaction]) -> int:
+        """Calculate total fees from all transactions in the mempool"""
+        fee = 0
+
+        for tx in transactions:
+            # Skip coinbase transactions (they don't have inputs to spend)
+            if tx.is_coinbase():
+                continue
+
+            # Calculate input values
+            input_sum = 0
+            for txin in tx.vin:
+                # Find the UTXO being spent
+                prevout = txin.prevout
+                if prevout in self.chain_state.utxo_set.utxos:
+                    utxo = self.chain_state.utxo_set.utxos[prevout]
+                    input_sum += utxo.tx_out.nValue
+
+            # Calculate output values
+            output_sum = sum(txout.nValue for txout in tx.vout)
+
+            # Fee is input_sum - output_sum
+            fee += (input_sum - output_sum)
+
+        return fee
+
     def create_candidate_block(self, prev_block, transactions, coinbase_data, miner_reward, script_pubkey):
         time = max(prev_block.get_median_time_past() if prev_block else 0, int(datetime.now().timestamp()))
 
         # Calculate dynamic difficulty
         bits = get_next_work_required(prev_block)
 
-        # Create coinbase transaction
+        # Calculate total fees from all transactions
+        total_fee = self.calculate_fee(transactions)
+
+        # Create coinbase transaction with block reward + fees
         coinbase_tx = self.create_coinbase_transaction(
             coinbase_data=coinbase_data,
-            miner_reward=miner_reward,
+            miner_reward=miner_reward + total_fee,  # Add fees to reward
             script_pubkey=script_pubkey
         )
 
