@@ -552,6 +552,24 @@ class JSONRPCServer:
                     if utxo.tx_out.scriptPubKey not in target_scripts:
                         continue
 
+                # Determine spendability
+                is_spendable = True
+                is_solvable = True  # Assume solvable unless we detect otherwise
+
+                # Check coinbase maturity
+                if utxo.coinbase and confirmations < 100:
+                    is_spendable = False
+
+                # Check if script type is supported for spending
+                # For now, we'll assume P2PKH and P2SH are solvable
+                # In a real implementation, you'd check if you have the private keys
+                # for the address or if it's a script you can solve
+
+                # Additional checks could be added here for:
+                # - Time-locked transactions
+                # - Complex script types the node can't solve
+                # - etc.
+
                 unspent.append({
                     'txid': prevout.hash.hex(),
                     'vout': prevout.n,
@@ -559,8 +577,8 @@ class JSONRPCServer:
                     'scriptPubKey': script_hex,
                     'amount': utxo.tx_out.nValue / 100_000_000,
                     'confirmations': confirmations,
-                    'spendable': True,  # Assuming all UTXOs are spendable
-                    'solvable': True,   # Assuming all UTXOs are solvable
+                    'spendable': is_spendable,
+                    'solvable': is_solvable,
                     'safe': confirmations > 6  # Consider safe after 6 confirmations
                 })
 
