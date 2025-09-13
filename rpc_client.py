@@ -1,9 +1,11 @@
 """
-Enhanced JSON-RPC client for testing all node API methods
+Enhanced JSON-RPC client for testing all node API methods with wallet functionality
 """
 import json
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import time
+import math
 
 
 class BitcoinRPCClient:
@@ -23,9 +25,14 @@ class BitcoinRPCClient:
             'id': 1
         }
 
-        response = requests.post(self.url, data=json.dumps(payload),
-                               headers=self.headers, timeout=30)
-        return response.json()
+        try:
+            response = requests.post(self.url, data=json.dumps(payload),
+                                   headers=self.headers, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"RPC call failed: {e}")
+            return {'error': str(e)}
 
     # Existing methods
     def getblockchaininfo(self):
@@ -34,8 +41,12 @@ class BitcoinRPCClient:
     def getnetworkinfo(self):
         return self.call('getnetworkinfo')
 
-    def getbalance(self, address='*', minconf=1):
-        return self.call('getbalance', [address, minconf])
+    def getbalance(self, address: str = "*", minconf: int = 1) -> Optional[float]:
+        """Get balance for specific address or total if address='*'"""
+        result = self.call('getbalance', [address, minconf])
+        if 'result' in result:
+            return result['result']
+        return None
 
     def getblockcount(self):
         return self.call('getblockcount')
@@ -59,9 +70,14 @@ class BitcoinRPCClient:
         """Get raw transaction data"""
         return self.call('getrawtransaction', [txid, verbose])
 
-    def sendrawtransaction(self, hexstring: str):
-        """Send raw transaction"""
-        return self.call('sendrawtransaction', [hexstring])
+    def sendrawtransaction(self, hexstring: str) -> Optional[str]:
+        """Send raw transaction and return txid if successful"""
+        result = self.call('sendrawtransaction', [hexstring])
+        if 'result' in result:
+            return result['result']
+        elif 'error' in result:
+            print(f"Transaction failed: {result['error']}")
+        return None
 
     def listunspent(self, minconf: int = 1, maxconf: int = 9999999, addresses: List[str] = None):
         """List unspent transaction outputs"""
@@ -97,145 +113,245 @@ class BitcoinRPCClient:
             params.append(sighashtype)
         return self.call('signrawtransactionwithkey', params)
 
+    # Enhanced wallet methods
+    def get_address_balance(self, address: str, minconf: int = 1) -> Dict[str, Any]:
+        """Get detailed balance information for a specific address"""
+        # Validate address first
+        validation = self.validateaddress(address)
+        if not validation.get('result', {}).get('isvalid', False):
+            return {'error': f'Invalid address: {address}'}
 
-def main():
-    # Test the RPC interface
-    client = BitcoinRPCClient('127.0.0.1', 8332)
+        # Get balance
+        balance = self.getbalance(address, minconf)
+        if balance is None:
+            return {'error': 'Failed to get balance'}
 
-    print("=== Testing All RPC Methods ===\n")
+        # Get UTXOs for this address
+        unspent = self.listunspent(minconf, 9999999, [address])
+        utxos = unspent.get('result', [])
 
-    # 1. Basic blockchain info
-    print("1. Blockchain Info:")
-    blockchain_info = client.getblockchaininfo()
-    print(f"   Blocks: {blockchain_info['result']['blocks']}")
-    print(f"   Best block hash: {blockchain_info['result']['bestblockhash']}")
-    print(f"   Difficulty: {blockchain_info['result']['difficulty']}\n")
+        total_utxo_value = sum(utxo['amount'] for utxo in utxos)
+        utxo_count = len(utxos)
 
-    # 2. Network info
-    print("2. Network Info:")
-    network_info = client.getnetworkinfo()
-    print(f"   Connections: {network_info['result']['connections']}")
-    print(f"   Version: {network_info['result']['version']}\n")
+        return {
+            'address': address,
+            'balance': balance,
+            'utxo_count': utxo_count,
+            'total_utxo_value': total_utxo_value,
+            'utxos': utxos
+        }
 
-    # 3. Balance
-    print("3. Balance:")
-    balance = client.getbalance()
-    print(f"   Total balance: {balance['result']} BTC\n")
+    def create_and_send_transaction(self, from_address: str, to_address: str, amount: float,
+                                  privkey: str, fee: float = 0.0001) -> Optional[str]:
+        """
+        Create and send a transaction from one address to another
 
-    # 4. Block operations
-    print("4. Block Operations:")
-    block_count = client.getblockcount()
-    current_height = block_count['result']
-    print(f"   Current block height: {current_height}")
+        Args:
+            from_address: Source address (must have UTXOs)
+            to_address: Destination address
+            amount: Amount to send in BTC
+            privkey: Private key in WIF format for signing
+            fee: Transaction fee in BTC
 
-    # Get block hash for height 0 (genesis)
-    block_hash = client.getblockhash(0)
-    print(f"   Genesis block hash: {block_hash['result']}")
+        Returns:
+            Transaction ID if successful, None otherwise
+        """
+        print(f"Creating transaction: {amount} BTC from {from_address} to {to_address}")
 
-    # Get block info for genesis block
-    block_info = client.getblock(block_hash['result'])
-    print(f"   Genesis block time: {block_info['result']['time']}\n")
+        # Validate addresses
+        from_valid = self.validateaddress(from_address)
+        to_valid = self.validateaddress(to_address)
 
-    # 5. Memory pool info
-    print("5. Memory Pool:")
-    mempool_info = client.getmempoolinfo()
-    print(f"   Mempool size: {mempool_info['result']['size']} transactions")
-    print(f"   Mempool bytes: {mempool_info['result']['bytes']} bytes\n")
+        if not from_valid.get('result', {}).get('isvalid', False):
+            print(f"Invalid from address: {from_address}")
+            return None
 
-    # 6. List unspent outputs
-    print("6. Unspent Outputs:")
-    unspent = client.listunspent()
-    print(f"   Found {len(unspent['result'])} unspent outputs")
-    if unspent['result']:
-        first_utxo = unspent['result'][0]
-        print(f"   First UTXO: {first_utxo['txid']}:{first_utxo['vout']}")
-        print(f"   Amount: {first_utxo['amount']} BTC\n")
+        if not to_valid.get('result', {}).get('isvalid', False):
+            print(f"Invalid to address: {to_address}")
+            return None
 
-        # 7. Get specific transaction output
-        print("7. Transaction Output:")
-        txout = client.gettxout(first_utxo['txid'], first_utxo['vout'])
-        if txout['result']:
-            print(f"   Output value: {txout['result']['value']} BTC")
-            print(f"   Confirmations: {txout['result']['confirmations']}\n")
-        else:
-            print("   Output not found (may be spent)\n")
+        # Get UTXOs for the from address
+        unspent_result = self.listunspent(1, 9999999, [from_address])
+        utxos = unspent_result.get('result', [])
 
-        # 8. Get raw transaction
-        print("8. Raw Transaction:")
-        raw_tx = client.getrawtransaction(first_utxo['txid'], verbose=True)
-        print(f"   Transaction version: {raw_tx['result']['version']}")
-        print(f"   Input count: {len(raw_tx['result']['vin'])}")
-        print(f"   Output count: {len(raw_tx['result']['vout'])}\n")
+        if not utxos:
+            print(f"No UTXOs found for address: {from_address}")
+            return None
 
-    # 9. Address validation
-    print("9. Address Validation:")
-    test_address = "1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn"
-    address_validation = client.validateaddress(test_address)
-    print(f"   Address {test_address} is valid: {address_validation['result']['isvalid']}\n")
+        # Calculate total available and select UTXOs
+        total_available = sum(utxo['amount'] for utxo in utxos)
+        if total_available < amount + fee:
+            print(f"Insufficient funds: {total_available} BTC available, need {amount + fee} BTC")
+            return None
 
-    # 10. Create raw transaction (example)
-    print("10. Create Raw Transaction:")
-    try:
-        # Example inputs and outputs (would need real data)
-        inputs = [{"txid": bytes(32).hex(), "vout": 0}]
-        outputs = {"1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn": 0.001}
+        # Select UTXOs (simple strategy: use all)
+        selected_utxos = [utxos[0]]
+        inputs = []
+        prevtxs = []
 
-        raw_tx_creation = client.createrawtransaction(inputs, outputs)
-        print(f"   Created raw transaction: {raw_tx_creation['result'][:64]}...\n")
-    except Exception as e:
-        print(f"   Raw transaction creation failed: {e}\n")
-
-    # 11. Sign raw transaction (proper test)
-    print("11. Sign Raw Transaction:")
-    try:
-        # Create a proper raw transaction first
-        unspent = client.listunspent()
-        if unspent['result']:
-            utxo = unspent['result'][0]
-
-            # Create raw transaction spending this UTXO
-            inputs = [{
+        for utxo in selected_utxos:
+            inputs.append({
                 "txid": utxo['txid'],
                 "vout": utxo['vout']
-            }]
+            })
+            prevtxs.append({
+                "txid": utxo['txid'],
+                "vout": utxo['vout'],
+                "scriptPubKey": utxo['scriptPubKey'],
+                "value": utxo['amount']
+            })
 
-            outputs = {
-                "1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn": utxo['amount'] - 0.0001  # minus fee
-            }
+        # Calculate change
+        total_input = sum(utxo['amount'] for utxo in selected_utxos)
+        change = total_input - amount - fee
 
-            raw_tx = client.createrawtransaction(inputs, outputs)
+        # Create outputs
+        outputs = {to_address: amount}
+        if change > 0:
+            outputs[from_address] = change
 
-            # Sign with test private key (would need actual key in real scenario)
-            signing_result = client.signrawtransactionwithkey(
-                raw_tx['result'],
-                ["L2AqHErFdJvM9Pscv6eJceyWzFAu5z8rCiWH1opivENwkdKssUUa"],  # Example WIF
-                [{
-                    "txid": utxo['txid'],
-                    "vout": utxo['vout'],
-                    "scriptPubKey": utxo['scriptPubKey'],
-                    "value": utxo['amount']
-                }]
-            )
-            print(f"   Signing complete: {signing_result['result']['complete']}")
-            if signing_result['result']['errors']:
-                print(f"   Errors: {signing_result['result']['errors']}")
+        # Create raw transaction
+        raw_tx_result = self.createrawtransaction(inputs, outputs)
+        if 'error' in raw_tx_result:
+            print(f"Failed to create raw transaction: {raw_tx_result.get('error')}")
+            return None
 
-    except Exception as e:
-        print(f"   Signing failed: {e}")
-    finally:
-        print()
+        raw_tx_hex = raw_tx_result.get('result')
+        if not raw_tx_hex:
+            print("No transaction hex returned")
+            return None
 
-    # 12. Best block hash
-    print("12. Best Block:")
-    best_block = client.getbestblockhash()
-    print(f"   Best block hash: {best_block['result']}\n")
+        # Sign the transaction
+        sign_result = self.signrawtransactionwithkey(raw_tx_hex, [privkey], prevtxs)
+        if 'error' in sign_result:
+            print(f"Failed to sign transaction: {sign_result.get('error')}")
+            return None
 
-    print("=== All RPC methods tested successfully! ===")
+        signed_tx = sign_result.get('result', {})
+        if not signed_tx.get('complete', False):
+            print(f"Transaction signing incomplete: {signed_tx.get('errors')}")
+            return None
 
-    # Uncomment to test node shutdown
-    # print("\nTesting node shutdown...")
-    # shutdown = client.stop()
-    # print(f"Shutdown result: {shutdown}")
+        # Send the transaction
+        txid = self.sendrawtransaction(signed_tx['hex'])
+        if txid:
+            print(f"Transaction sent successfully! TXID: {txid}")
+
+            # Wait for transaction to propagate
+            print("Waiting for transaction to be detected...")
+            time.sleep(2)
+
+            # Check if transaction is in mempool
+            mempool_info = self.getmempoolinfo()
+            print(f"Mempool size: {mempool_info.get('result', {}).get('size', 'unknown')}")
+
+            return txid
+
+        return None
+
+    def monitor_transaction(self, txid: str, timeout: int = 60):
+        """Monitor a transaction until it's confirmed or timeout"""
+        print(f"Monitoring transaction {txid}...")
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            # Check mempool first
+            try:
+                raw_tx = self.getrawtransaction(txid, verbose=True)
+                if 'result' in raw_tx:
+                    tx_data = raw_tx['result']
+                    if 'confirmations' in tx_data and tx_data['confirmations'] > 0:
+                        print(f"Transaction confirmed with {tx_data['confirmations']} confirmations!")
+                        return True
+                    else:
+                        print("Transaction in mempool, waiting for confirmation...")
+                else:
+                    print("Transaction not found in mempool or blockchain yet...")
+            except:
+                print("Error checking transaction status")
+
+            time.sleep(5)
+
+        print("Transaction monitoring timeout")
+        return False
+
+
+def main():
+    # Test the RPC interface with enhanced wallet functionality
+    client = BitcoinRPCClient('127.0.0.1', 8332)
+
+    print("=== Testing Enhanced Wallet Functionality ===\n")
+
+    # Test addresses (replace with actual addresses from your node)
+    test_address_1 = "1LjSwS2r46eQuWsgV1zUKV4vXAJvG9BgRd"  # Replace with real address
+    test_address_2 = "1A9Dc8oouGkbi1gdr1xRwJnmGNaxETZKqn"  # Replace with real address
+
+    # Test private key (replace with actual private key for test_address_1)
+    test_privkey = "L2AqHErFdJvM9Pscv6eJceyWzFAu5z8rCiWH1opivENwkdKssUUa"  # Replace with real WIF
+
+    # 1. Check specific address balance
+    print("1. Address Balance Check:")
+    balance_info = client.get_address_balance(test_address_1)
+    if 'error' in balance_info:
+        print(f"   Error: {balance_info['error']}")
+    else:
+        print(f"   Address: {balance_info['address']}")
+        print(f"   Balance: {balance_info['balance']} BTC")
+        print(f"   UTXO Count: {balance_info['utxo_count']}")
+        print(f"   Total UTXO Value: {balance_info['total_utxo_value']} BTC")
+
+        if balance_info['utxos']:
+            print(f"   First UTXO: {balance_info['utxos'][0]['txid']}:{balance_info['utxos'][0]['vout']}")
+            print(f"   UTXO Amount: {balance_info['utxos'][0]['amount']} BTC")
+    print()
+
+    # 2. Validate addresses
+    print("2. Address Validation:")
+    for addr in [test_address_1, test_address_2, "invalid_address"]:
+        validation = client.validateaddress(addr)
+        is_valid = validation.get('result', {}).get('isvalid', False)
+        print(f"   {addr}: {'Valid' if is_valid else 'Invalid'}")
+    print()
+
+    # 3. Send transaction (only if we have funds)
+    print("3. Transaction Creation and Sending:")
+
+    # Check if we have enough balance to send a small amount
+    balance_info = client.get_address_balance(test_address_1)
+    if 'error' not in balance_info and balance_info['balance'] > 0.001:
+        amount_to_send = round(math.pi, 8) # Send a very small amount
+        txid = client.create_and_send_transaction(
+            from_address=test_address_1,
+            to_address=test_address_2,
+            amount=amount_to_send,
+            privkey=test_privkey,
+            fee=0.00001
+        )
+
+        if txid:
+            print(f"   Transaction sent! TXID: {txid}")
+
+            # Monitor the transaction
+            print("4. Transaction Monitoring:")
+            confirmed = client.monitor_transaction(txid, timeout=30)
+            if confirmed:
+                print("   Transaction confirmed!")
+            else:
+                print("   Transaction not confirmed within timeout")
+        else:
+            print("   Failed to send transaction")
+    else:
+        print("   Insufficient balance for transaction test")
+    print()
+
+    # 5. Check updated balances
+    print("5. Updated Balances:")
+    for addr in [test_address_1, test_address_2]:
+        balance = client.getbalance(addr)
+        print(f"   {addr}: {balance if balance is not None else 'Unknown'} BTC")
+    print()
+
+    print("=== Wallet functionality test completed! ===")
 
 
 if __name__ == "__main__":
