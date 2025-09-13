@@ -1,3 +1,4 @@
+import time
 from interpreter import verify_script
 from transaction import CTransaction
 from utxo import UTXOSet
@@ -41,8 +42,8 @@ def validate_transaction(tx: CTransaction, utxo_set: UTXOSet, block_height: int)
             raise TransactionValidationError(f"Missing UTXO for {prevout}")
         
         # Check coinbase maturity
-        if utxo.is_coinbase:
-            if (block_height - utxo.block_height) < 100:
+        if utxo.coinbase:
+            if (block_height - utxo.height) < 100:
                 raise TransactionValidationError("Immature coinbase spend")
         
         input_values.append(utxo.tx_out.nValue)
