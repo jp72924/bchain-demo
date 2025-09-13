@@ -5,7 +5,6 @@ import json
 import requests
 from typing import List, Dict, Any, Optional
 import time
-import math
 
 
 class BitcoinRPCClient:
@@ -141,8 +140,7 @@ class BitcoinRPCClient:
             'utxos': utxos
         }
 
-    def create_and_send_transaction(self, from_address: str, to_address: str, amount: float,
-                                  privkey: str, fee: float = 0.0001) -> Optional[str]:
+    def create_and_send_transaction(self, from_address: str, to_address: str, amount: float, privkey: str, fee: float = 0.0001) -> Optional[str]:
         """
         Create and send a transaction from one address to another
 
@@ -170,22 +168,43 @@ class BitcoinRPCClient:
             print(f"Invalid to address: {to_address}")
             return None
 
-        # Get UTXOs for the from address
+        # Get UTXOs for the from address - filter for spendable ones only
         unspent_result = self.listunspent(1, 9999999, [from_address])
         utxos = unspent_result.get('result', [])
 
-        if not utxos:
-            print(f"No UTXOs found for address: {from_address}")
+        # Filter out non-spendable UTXOs
+        spendable_utxos = [utxo for utxo in utxos if utxo.get('spendable', False)]
+
+        if not spendable_utxos:
+            print(f"No spendable UTXOs found for address: {from_address}")
+            print(f"Total UTXOs: {len(utxos)}, Spendable: {len(spendable_utxos)}")
+            # Optionally show why UTXOs are not spendable
+            for utxo in utxos:
+                if not utxo.get('spendable', False):
+                    print(f"  UTXO {utxo['txid']}:{utxo['vout']} - not spendable")
             return None
 
-        # Calculate total available and select UTXOs
-        total_available = sum(utxo['amount'] for utxo in utxos)
-        if total_available < amount + fee:
-            print(f"Insufficient funds: {total_available} BTC available, need {amount + fee} BTC")
+        # Sort spendable UTXOs by amount (ascending) to try to use greatest ones first
+        spendable_utxos.sort(key=lambda x: x['amount'], reverse=True)
+
+        # Select minimum necessary UTXOs instead of all
+        selected_utxos = []
+        total_selected = 0.0
+        target_amount = amount + fee
+
+        for utxo in spendable_utxos:
+            if total_selected < target_amount:
+                selected_utxos.append(utxo)
+                total_selected += utxo['amount']
+            else:
+                break  # We have enough, stop selecting
+
+        # Check if we have enough funds with selected UTXOs
+        if total_selected < target_amount:
+            print(f"Insufficient funds: {total_selected} BTC selected, need {target_amount} BTC")
+            print(f"Total spendable balance: {sum(utxo['amount'] for utxo in spendable_utxos)} BTC")
             return None
 
-        # Select UTXOs (simple strategy: use all)
-        selected_utxos = [utxos[0]]
         inputs = []
         prevtxs = []
 
@@ -202,7 +221,7 @@ class BitcoinRPCClient:
             })
 
         # Calculate change
-        total_input = sum(utxo['amount'] for utxo in selected_utxos)
+        total_input = total_selected
         change = total_input - amount - fee
 
         # Create outputs
@@ -236,6 +255,8 @@ class BitcoinRPCClient:
         txid = self.sendrawtransaction(signed_tx['hex'])
         if txid:
             print(f"Transaction sent successfully! TXID: {txid}")
+            print(f"Used {len(selected_utxos)} UTXOs (minimum necessary)")
+            print(f"Selected amount: {total_selected} BTC, Needed: {target_amount} BTC")
 
             # Wait for transaction to propagate
             print("Waiting for transaction to be detected...")
@@ -319,7 +340,7 @@ def main():
     # Check if we have enough balance to send a small amount
     balance_info = client.get_address_balance(test_address_1)
     if 'error' not in balance_info and balance_info['balance'] > 0.001:
-        amount_to_send = round(math.pi, 8) # Send a very small amount
+        amount_to_send = 51 # Send a very small amount
         txid = client.create_and_send_transaction(
             from_address=test_address_1,
             to_address=test_address_2,
